@@ -1,0 +1,36 @@
+{
+  "name": "private-notify",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Encrypted native Android notification subscriptions with a Node CLI and FCM sender.",
+  "bin": {
+    "notify": "./cli/notify.js",
+    "rep": "./cli/rep.js"
+  },
+  "scripts": {
+    "notify": "node ./cli/notify.js",
+    "rep": "node ./cli/rep.js",
+    "pair": "node ./cli/notify.js pair",
+    "send": "node ./cli/notify.js send",
+    "bundle:rep": "node ./scripts/bundle-rep.mjs",
+    "package:rep": "npm run bundle:rep && pkg dist/rep.cjs --targets node22-win-x64 --no-bytecode --public --public-packages \"*\" --output dist/rep-windows-x64.exe",
+    "build:rep": "npm run package:rep && powershell -NoProfile -ExecutionPolicy Bypass -Command \"New-Item -ItemType Directory -Force 'C:\\Programs' | Out-Null; Copy-Item -Force 'dist\\rep-windows-x64.exe' 'C:\\Programs\\rep.exe'\"",
+    "test:protocol": "node ./cli/protocol.test.js",
+    "test:fcm": "node ./cli/fcm.test.js",
+    "test": "npm run test:protocol && npm run test:fcm",
+    "android:build": "android\\gradlew.bat -p android assembleDebug",
+    "android:install": "android\\gradlew.bat -p android installDebug",
+    "android:release": "android\\gradlew.bat -p android assembleRelease"
+  },
+  "dependencies": {
+    "@noble/ciphers": "^2.2.0",
+    "commander": "^15.0.0",
+    "qrcode-terminal": "^0.12.0",
+    "yaml": "^2.9.0"
+  },
+  "devDependencies": {
+    "@yao-pkg/pkg": "^6.21.0",
+    "esbuild": "^0.28.1"
+  }
+}

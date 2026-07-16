@@ -1,0 +1,64 @@
+plugins {
+    id "com.android.application"
+}
+
+def hasGoogleServices = file("google-services.json").exists()
+if (hasGoogleServices) {
+    apply plugin: "com.google.gms.google-services"
+}
+
+def releaseKeystorePath = System.getenv("PRIVATE_NOTIFY_KEYSTORE_PATH")
+def releaseStorePassword = System.getenv("PRIVATE_NOTIFY_STORE_PASSWORD")
+def releaseKeyAlias = System.getenv("PRIVATE_NOTIFY_KEY_ALIAS")
+def releaseKeyPassword = System.getenv("PRIVATE_NOTIFY_KEY_PASSWORD")
+def hasReleaseSigning = releaseKeystorePath && releaseStorePassword && releaseKeyAlias && releaseKeyPassword
+def releaseVersionName = System.getenv("PRIVATE_NOTIFY_VERSION_NAME") ?: "0.1.0"
+def releaseVersionCode = (System.getenv("PRIVATE_NOTIFY_VERSION_CODE") ?: "1").toInteger()
+
+android {
+    namespace "dev.privatenotify"
+    compileSdk 36
+
+    defaultConfig {
+        applicationId "dev.privatenotify"
+        minSdk 28
+        targetSdk 36
+        versionCode releaseVersionCode
+        versionName releaseVersionName
+        buildConfigField "boolean", "FIREBASE_CONFIGURED", hasGoogleServices ? "true" : "false"
+    }
+
+    if (hasReleaseSigning) {
+        signingConfigs {
+            release {
+                storeFile file(releaseKeystorePath)
+                storePassword releaseStorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            if (hasReleaseSigning) {
+                signingConfig signingConfigs.release
+            }
+        }
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    implementation platform("com.google.firebase:firebase-bom:34.15.0")
+    implementation "com.google.firebase:firebase-messaging"
+    implementation "com.journeyapps:zxing-android-embedded:4.3.0"
+}
