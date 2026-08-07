@@ -37,7 +37,17 @@ function Assert-ReleaseAssetHash {
     }
 
     $expected = ($line -split '\s+')[0]
-    $actual = (Get-FileHash -Algorithm SHA256 $Path).Hash
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $stream = [System.IO.File]::OpenRead($Path)
+        try {
+            $actual = [BitConverter]::ToString($sha256.ComputeHash($stream)).Replace('-', '')
+        } finally {
+            $stream.Dispose()
+        }
+    } finally {
+        $sha256.Dispose()
+    }
     if ($actual -ne $expected) {
         throw "Checksum verification failed for $AssetName."
     }
