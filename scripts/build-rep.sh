@@ -21,8 +21,10 @@ for target in "${TARGETS[@]}"; do
     IFS=':' read -r GOOS GOARCH ASSET <<< "$target"
     output="$OUTPUT_DIR/$ASSET"
     echo "Building $output..."
-    GOOS="$GOOS" GOARCH="$GOARCH" go build -C "$SOURCE_DIR" \
-        -ldflags "-X github.com/flcl42/notify/rep/internal/version.Version=$VERSION" \
+    # CGO_ENABLED=0 keeps the binaries free of any libc dependency, so a Linux
+    # build does not inherit the glibc version of the machine that produced it.
+    GOOS="$GOOS" GOARCH="$GOARCH" CGO_ENABLED=0 go build -C "$SOURCE_DIR" -trimpath \
+        -ldflags "-s -w -X github.com/flcl42/notify/rep/internal/version.Version=$VERSION" \
         -o "$output" .
 done
 

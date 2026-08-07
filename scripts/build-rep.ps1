@@ -21,15 +21,23 @@ $targets = @(
     @{ GOOS = "darwin"; GOARCH = "arm64"; Asset = "rep-macos-arm64" }
 )
 
-foreach ($target in $targets) {
-    $env:GOOS = $target.GOOS
-    $env:GOARCH = $target.GOARCH
-    $output = Join-Path $OutputDirectory $target.Asset
-    Write-Host "Building $output..."
-    & go build -C $source -ldflags "-X github.com/flcl42/notify/rep/internal/version.Version=$Version" -o $output .
-    if ($LASTEXITCODE -ne 0) {
-        throw "Build failed for $target.Asset"
+try {
+    foreach ($target in $targets) {
+        $env:GOOS = $target.GOOS
+        $env:GOARCH = $target.GOARCH
+        # CGO_ENABLED=0 keeps the binaries free of any libc dependency, so a Linux
+        # build does not inherit the glibc version of the machine that produced it.
+        $env:CGO_ENABLED = "0"
+        $output = Join-Path $OutputDirectory $target.Asset
+        Write-Host "Building $output..."
+        & go build -C $source -trimpath -ldflags "-s -w -X github.com/flcl42/notify/rep/internal/version.Version=$Version" -o $output .
+        if ($LASTEXITCODE -ne 0) {
+            throw "Build failed for $($target.Asset)"
+        }
     }
+}
+finally {
+    Remove-Item Env:GOOS, Env:GOARCH, Env:CGO_ENABLED -ErrorAction SilentlyContinue
 }
 
 Write-Host "Done. Assets in $OutputDirectory"

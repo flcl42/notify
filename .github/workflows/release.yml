@@ -27,8 +27,17 @@ jobs:
       - run: go test ./...
         working-directory: rep
       - name: Build Windows x64 binary
-        run: GOOS=windows GOARCH=amd64 go build -ldflags "-X github.com/flcl42/notify/rep/internal/version.Version=test" -o /tmp/rep-windows-x64.exe .
+        run: GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X github.com/flcl42/notify/rep/internal/version.Version=test" -o /tmp/rep-windows-x64.exe .
         working-directory: rep
+      - name: Build Linux x64 binary and assert static linking
+        working-directory: rep
+        run: |
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X github.com/flcl42/notify/rep/internal/version.Version=test" -o /tmp/rep-linux-x64 .
+          if readelf -l /tmp/rep-linux-x64 | grep -q INTERP; then
+            echo "::error::rep-linux-x64 is dynamically linked and will fail on hosts with older glibc"
+            readelf -d /tmp/rep-linux-x64
+            exit 1
+          fi
 
   check-android:
     name: check Android
@@ -94,15 +103,28 @@ jobs:
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
+          # Pure Go build: no libc at runtime, so the binaries are not tied to
+          # the glibc version of whichever runner image built them.
+          CGO_ENABLED: "0"
         run: |
           mkdir -p dist
-          go build -ldflags "-X github.com/flcl42/notify/rep/internal/version.Version=$REP_VERSION" -o "dist/${{ matrix.asset }}" .
+          go build -trimpath -ldflags "-s -w -X github.com/flcl42/notify/rep/internal/version.Version=$REP_VERSION" -o "dist/${{ matrix.asset }}" .
       - name: Verify packaged executable
         shell: bash
         working-directory: rep
         run: |
           binary="dist/${{ matrix.asset }}"
           target_arch="${{ matrix.goarch }}"
+
+          # Linux assets must be static, otherwise they only run on hosts whose
+          # glibc is at least as new as the runner image's.
+          if [[ "${{ matrix.goos }}" == "linux" ]]; then
+            if readelf -l "$binary" | grep -q INTERP; then
+              echo "::error::$binary is dynamically linked and will fail on hosts with older glibc"
+              readelf -d "$binary"
+              exit 1
+            fi
+          fi
 
           # Only run the binary when the host architecture matches.
           if [[ "$RUNNER_OS" == "macOS" && "$target_arch" == "arm64" ]]; then
