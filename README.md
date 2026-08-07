@@ -3,7 +3,7 @@
 Private Notify delivers rare, timely Android notifications without keeping a
 socket open. A native Android app receives high-priority FCM data messages,
 decrypts them locally with ChaCha20-Poly1305, stores them, and displays normal
-Android notifications. The standalone `rep` CLI creates QR subscriptions and
+Android notifications. The standalone `rep` CLI, written in Go, creates QR subscriptions and
 sends encrypted messages by title.
 
 The project is self-hosted: the Android APK's Firebase client configuration and
@@ -196,19 +196,36 @@ and Android signing secrets, and publish releases from that fork.
 
 ## Build From Source
 
-Prerequisites are Node.js 22, JDK 17, Android SDK 36, and Android platform tools.
+Prerequisites are Go 1.23, JDK 17, Android SDK 36, and Android platform tools.
+
+Build the CLI binaries for all platforms:
 
 ```powershell
-npm ci
-npm test
-npm run build:rep
+# Windows
+.\scripts\build-rep.ps1 -Version 0.2.0
+```
+
+```bash
+# Linux / macOS / WSL
+./scripts/build-rep.sh 0.2.0
+```
+
+Run the Go tests:
+
+```bash
+cd rep
+go test ./...
+```
+
+Build the Android app:
+
+```powershell
 npm run android:build
 npm run android:install
 ```
 
-`npm run build:rep` packages and installs `C:\Programs\rep.exe`. The Android app
-has no JavaScript runtime. If `google-services.json` is absent, the source still
-compiles but Firebase registration is disabled.
+If `google-services.json` is absent, the source still compiles but Firebase
+registration is disabled.
 
 ## How It Works
 

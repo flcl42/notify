@@ -20,13 +20,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-go@v7
         with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npm test
-      - run: npm run bundle:rep
+          go-version: "1.23"
+      - run: go test ./...
+        working-directory: rep
+      - name: Build Windows x64 binary
+        run: GOOS=windows GOARCH=amd64 go build -ldflags "-X github.com/flcl42/notify/rep/internal/version.Version=test" -o /tmp/rep-windows-x64.exe .
+        working-directory: rep
 
   check-android:
     name: check Android
@@ -51,61 +52,86 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            target: node22-linux-x64
+            goos: linux
+            goarch: amd64
             asset: rep-linux-x64
           - os: ubuntu-latest
-            target: node22-linux-arm64
+            goos: linux
+            goarch: arm64
             asset: rep-linux-arm64
           - os: windows-latest
-            target: node22-win-x64
+            goos: windows
+            goarch: amd64
             asset: rep-windows-x64.exe
           - os: windows-latest
-            target: node22-win-arm64
+            goos: windows
+            goarch: arm64
             asset: rep-windows-arm64.exe
           - os: macos-latest
-            target: node22-macos-x64
+            goos: darwin
+            goarch: amd64
             asset: rep-macos-x64
           - os: macos-latest
-            target: node22-macos-arm64
+            goos: darwin
+            goarch: arm64
             asset: rep-macos-arm64
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-go@v7
         with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - name: Package standalone executable
-        shell: pwsh
+          go-version: "1.23"
+      - name: Determine version
+        shell: bash
         run: |
-          npm run bundle:rep
-          npx pkg dist/rep.cjs --targets "${{ matrix.target }}" --no-bytecode --public --public-packages "*" --output "dist/${{ matrix.asset }}"
-          if ($env:RUNNER_OS -ne "Windows") {
-            chmod +x "dist/${{ matrix.asset }}"
-          }
+          version="${GITHUB_REF_NAME#release/}"
+          version="${version#v}"
+          echo "REP_VERSION=$version" >> "$GITHUB_ENV"
+      - name: Build standalone executable
+        shell: bash
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          mkdir -p rep/dist
+          go build -C rep -ldflags "-X github.com/flcl42/notify/rep/internal/version.Version=$REP_VERSION" -o "rep/dist/${{ matrix.asset }}" .
       - name: Verify packaged executable
-        shell: pwsh
+        shell: bash
         run: |
-          $binary = "dist/${{ matrix.asset }}"
-          if ($env:RUNNER_OS -eq "macOS") {
-            codesign --verify --verbose=2 $binary
-            if ($LASTEXITCODE -ne 0) {
-              throw "macOS executable is not signed."
-            }
-          }
+          binary="rep/dist/${{ matrix.asset }}"
+          target_arch="${{ matrix.goarch }}"
 
-          $targetArchitecture = if ("${{ matrix.target }}" -like "*-arm64") { "ARM64" } else { "X64" }
-          if ($env:RUNNER_ARCH -eq $targetArchitecture) {
-            $expectedVersion = node -p "require('./package.json').version"
-            $actualVersion = (& "./$binary" --version).Trim()
-            if ($LASTEXITCODE -ne 0 -or $actualVersion -ne $expectedVersion) {
-              throw "Packaged executable version check failed."
-            }
-          }
+          # Only run the binary when the host architecture matches.
+          if [[ "$RUNNER_OS" == "macOS" && "$target_arch" == "arm64" ]]; then
+            actual_version=$("./$binary" --version | awk '{print $3}')
+            expected_version="$REP_VERSION"
+            if [ "$actual_version" != "$expected_version" ]; then
+              echo "Expected version $expected_version, got $actual_version"
+              exit 1
+            fi
+          fi
+
+          if [[ "$RUNNER_OS" == "Windows" && "$target_arch" == "amd64" ]]; then
+            actual_version=$("./$binary" --version | awk '{print $3}')
+            expected_version="$REP_VERSION"
+            if [ "$actual_version" != "$expected_version" ]; then
+              echo "Expected version $expected_version, got $actual_version"
+              exit 1
+            fi
+          fi
+
+          if [[ "$RUNNER_OS" == "Linux" && "$target_arch" == "amd64" ]]; then
+            chmod +x "$binary"
+            actual_version=$("./$binary" --version | awk '{print $3}')
+            expected_version="$REP_VERSION"
+            if [ "$actual_version" != "$expected_version" ]; then
+              echo "Expected version $expected_VERSION, got $actual_version"
+              exit 1
+            fi
+          fi
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.asset }}
-          path: dist/${{ matrix.asset }}
+          path: rep/dist/${{ matrix.asset }}
           if-no-files-found: error
           compression-level: 0
 

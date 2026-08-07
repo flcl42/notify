@@ -58,9 +58,9 @@ The tag version must match `package.json`. Bump it for a later release, or keep
 the existing version for the first release:
 
 ```powershell
-npm version patch --no-git-tag-version
+# Update package.json version manually or with npm version, then commit and tag.
 $version = (Get-Content .\package.json -Raw | ConvertFrom-Json).version
-git add package.json package-lock.json
+git add package.json
 git commit -m "release $version"
 git tag "release/$version"
 git push origin master --tags
