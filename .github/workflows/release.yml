@@ -23,6 +23,7 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: "1.23"
+          cache-dependency-path: rep/go.sum
       - run: go test ./...
         working-directory: rep
       - name: Build Windows x64 binary
@@ -80,6 +81,7 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: "1.23"
+          cache-dependency-path: rep/go.sum
       - name: Determine version
         shell: bash
         run: |
@@ -88,16 +90,18 @@ jobs:
           echo "REP_VERSION=$version" >> "$GITHUB_ENV"
       - name: Build standalone executable
         shell: bash
+        working-directory: rep
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
         run: |
-          mkdir -p rep/dist
-          go build -C rep -ldflags "-X github.com/flcl42/notify/rep/internal/version.Version=$REP_VERSION" -o "rep/dist/${{ matrix.asset }}" .
+          mkdir -p dist
+          go build -ldflags "-X github.com/flcl42/notify/rep/internal/version.Version=$REP_VERSION" -o "dist/${{ matrix.asset }}" .
       - name: Verify packaged executable
         shell: bash
+        working-directory: rep
         run: |
-          binary="rep/dist/${{ matrix.asset }}"
+          binary="dist/${{ matrix.asset }}"
           target_arch="${{ matrix.goarch }}"
 
           # Only run the binary when the host architecture matches.
@@ -124,7 +128,7 @@ jobs:
             actual_version=$("./$binary" --version | awk '{print $3}')
             expected_version="$REP_VERSION"
             if [ "$actual_version" != "$expected_version" ]; then
-              echo "Expected version $expected_VERSION, got $actual_version"
+              echo "Expected version $expected_version, got $actual_version"
               exit 1
             fi
           fi
