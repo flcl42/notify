@@ -36,8 +36,15 @@ type PushToken struct {
 	Token    string `json:"token"`
 }
 
+// Envelope mirrors protocol.Envelope. Every field is delivered to the phone as
+// the encryptedEnvelope data value, which refuses to decrypt unless type, v,
+// subscriptionId, nonce and ciphertext are all present.
 type Envelope struct {
+	Type           string `json:"type"`
+	V              int    `json:"v"`
 	SubscriptionID string `json:"subscriptionId"`
+	Nonce          string `json:"nonce"`
+	Ciphertext     string `json:"ciphertext"`
 }
 
 type SendOptions struct {

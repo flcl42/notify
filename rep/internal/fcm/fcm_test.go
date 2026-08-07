@@ -13,7 +13,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/flcl42/notify/rep/internal/protocol"
 	"github.com/google/uuid"
+	"golang.org/x/crypto/chacha20poly1305"
 )
 
 func generateServiceAccount(t *testing.T, dir string) string {
@@ -104,5 +106,109 @@ func TestSendPushNotifications(t *testing.T) {
 	data := message["data"].(map[string]interface{})
 	if data["encryptedEnvelope"] == "" {
 		t.Fatalf("missing encrypted envelope")
+	}
+}
+
+// TestSendPushNotificationsDeliversDecryptableEnvelope guards the whole payload
+// contract: the phone rejects the envelope unless type, v, subscriptionId,
+// nonce and ciphertext all survive the trip through the FCM data map.
+func TestSendPushNotificationsDeliversDecryptableEnvelope(t *testing.T) {
+	dir := t.TempDir()
+	serviceAccountPath := generateServiceAccount(t, dir)
+
+	key := make([]byte, chacha20poly1305.KeySize)
+	if _, err := rand.Read(key); err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	sub := protocol.Subscription{
+		ID:    uuid.Must(uuid.NewRandom()).String(),
+		Title: "Salary",
+		Key:   protocol.BytesToBase64URL(key),
+	}
+
+	sealed, err := protocol.EncryptNotification(sub, protocol.Notification{
+		V:              "1",
+		ID:             uuid.Must(uuid.NewRandom()).String(),
+		SubscriptionID: sub.ID,
+		Service:        "test",
+		Title:          sub.Title,
+		Body:           "the payroll ran",
+		Data:           map[string]interface{}{},
+	})
+	if err != nil {
+		t.Fatalf("encrypt: %v", err)
+	}
+
+	var fcmRequest json.RawMessage
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read body: %v", err)
+		}
+		_ = r.Body.Close()
+
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/token" {
+			w.Write([]byte(`{"access_token":"test-token","expires_in":3600,"token_type":"Bearer"}`))
+			return
+		}
+		fcmRequest = body
+		w.Write([]byte(`{"name":"projects/test/messages/1"}`))
+	}))
+	defer server.Close()
+
+	_, err = SendPushNotifications(
+		[]PushToken{{Provider: "fcm", Token: "fcm-token"}},
+		Envelope{
+			Type:           sealed.Type,
+			V:              sealed.V,
+			SubscriptionID: sealed.SubscriptionID,
+			Nonce:          sealed.Nonce,
+			Ciphertext:     sealed.Ciphertext,
+		},
+		SendOptions{
+			Service:            "test",
+			ServiceAccountPath: serviceAccountPath,
+			TokenURL:           server.URL + "/token",
+			URL:                server.URL + "/fcm",
+		},
+	)
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+
+	var body struct {
+		Message struct {
+			Data struct {
+				EncryptedEnvelope string `json:"encryptedEnvelope"`
+			} `json:"data"`
+		} `json:"message"`
+	}
+	if err := json.Unmarshal(fcmRequest, &body); err != nil {
+		t.Fatalf("parse fcm body: %v", err)
+	}
+
+	var delivered protocol.Envelope
+	if err := json.Unmarshal([]byte(body.Message.Data.EncryptedEnvelope), &delivered); err != nil {
+		t.Fatalf("parse delivered envelope: %v", err)
+	}
+
+	// These are the exact preconditions Protocol.decryptNotification enforces.
+	if delivered.Type != "notification" || delivered.V != 1 {
+		t.Fatalf("phone would reject envelope: type=%q v=%d", delivered.Type, delivered.V)
+	}
+	if delivered.SubscriptionID != sub.ID {
+		t.Fatalf("subscription id mismatch: %q", delivered.SubscriptionID)
+	}
+
+	note, err := protocol.DecryptNotification(sub, delivered)
+	if err != nil {
+		t.Fatalf("phone could not decrypt the delivered envelope: %v", err)
+	}
+	if note.Body != "the payroll ran" {
+		t.Fatalf("body mismatch: %q", note.Body)
+	}
+	if note.Title != "Salary" {
+		t.Fatalf("title mismatch: %q", note.Title)
 	}
 }

@@ -277,7 +277,11 @@ func sendNotification(args []string, service string, fcmServiceAccount string, f
 	}
 
 	result, err := fcm.SendPushNotifications(pushTokens, fcm.Envelope{
+		Type:           envelope.Type,
+		V:              envelope.V,
 		SubscriptionID: envelope.SubscriptionID,
+		Nonce:          envelope.Nonce,
+		Ciphertext:     envelope.Ciphertext,
 	}, fcm.SendOptions{
 		Service:            service,
 		ServiceAccountPath: config.ResolveFcmServiceAccount(cfg, fcmServiceAccount),
