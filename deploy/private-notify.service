@@ -1,0 +1,30 @@
+[Unit]
+Description=Private Notify encrypted FCM relay
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/root/notify
+UMask=0077
+ExecStart=/root/notify/notify-server --listen :17891 --public-url http://62.171.163.96:17891 --state /root/notify/state.json --fcm-service-account /root/.config/private-notify/fcm-service-account.json --daily-limit 100000 --subscription-daily-limit 1000
+Restart=always
+RestartSec=2
+TimeoutStopSec=15
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/root/notify
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+
+[Install]
+WantedBy=multi-user.target

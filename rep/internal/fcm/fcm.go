@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -48,12 +49,13 @@ type Envelope struct {
 }
 
 type SendOptions struct {
-	Service         string
+	Service            string
 	ServiceAccountPath string
-	ProjectID       string
-	TokenURL        string
-	URL             string
-	TTL             string
+	ProjectID          string
+	TokenURL           string
+	URL                string
+	TTL                string
+	HTTPClient         *http.Client
 }
 
 type SendResult struct {
@@ -99,18 +101,18 @@ func parsePrivateKey(pemKey string) (*rsa.PrivateKey, error) {
 	return rsaKey, nil
 }
 
-func signJWT(sa *ServiceAccount) (string, error) {
+func signJWT(sa *ServiceAccount, audience string) (string, error) {
 	now := time.Now().Unix()
 	header := map[string]string{
 		"alg": "RS256",
 		"typ": "JWT",
 	}
 	claims := map[string]interface{}{
-		"iss": sa.ClientEmail,
+		"iss":   sa.ClientEmail,
 		"scope": fcmScope,
-		"aud": tokenURL,
-		"iat": now,
-		"exp": now + 3600,
+		"aud":   audience,
+		"iat":   now,
+		"exp":   now + 3600,
 	}
 
 	headerJSON, err := json.Marshal(header)
@@ -140,44 +142,120 @@ func signJWT(sa *ServiceAccount) (string, error) {
 	return input + "." + base64URLEncode(signature), nil
 }
 
-func getAccessToken(sa *ServiceAccount, tokenURL string) (string, error) {
-	assertion, err := signJWT(sa)
+func getAccessToken(client *http.Client, sa *ServiceAccount, tokenURL string) (string, time.Duration, error) {
+	assertion, err := signJWT(sa, tokenURL)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 
 	data := url.Values{}
 	data.Set("grant_type", "urn:ietf:params:oauth:grant-type:jwt-bearer")
 	data.Set("assertion", assertion)
 
-	resp, err := http.Post(tokenURL, "application/x-www-form-urlencoded", strings.NewReader(data.Encode()))
+	req, err := http.NewRequest(http.MethodPost, tokenURL, strings.NewReader(data.Encode()))
 	if err != nil {
-		return "", err
+		return "", 0, err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", 0, err
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 
-	var payload map[string]interface{}
+	var payload struct {
+		AccessToken string `json:"access_token"`
+		ExpiresIn   int    `json:"expires_in"`
+	}
 	if err := json.Unmarshal(body, &payload); err != nil {
-		return "", fmt.Errorf("could not parse token response: %s", string(body))
+		return "", 0, fmt.Errorf("could not parse token response: %s", string(body))
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("could not get Google access token: %s", string(body))
+		return "", 0, fmt.Errorf("could not get Google access token: %s", string(body))
 	}
 
-	token, ok := payload["access_token"].(string)
-	if !ok || token == "" {
-		return "", fmt.Errorf("could not get Google access token: %s", string(body))
+	if payload.AccessToken == "" {
+		return "", 0, fmt.Errorf("could not get Google access token: %s", string(body))
 	}
+	if payload.ExpiresIn <= 0 {
+		payload.ExpiresIn = 3600
+	}
+	return payload.AccessToken, time.Duration(payload.ExpiresIn) * time.Second, nil
+}
+
+type Sender struct {
+	serviceAccount *ServiceAccount
+	projectID      string
+	tokenURL       string
+	endpoint       string
+	ttl            string
+	httpClient     *http.Client
+
+	mu                sync.Mutex
+	cachedAccessToken string
+	accessTokenExpiry time.Time
+}
+
+func NewSender(options SendOptions) (*Sender, error) {
+	serviceAccount, err := loadServiceAccount(options.ServiceAccountPath)
+	if err != nil {
+		return nil, err
+	}
+	projectID := options.ProjectID
+	if projectID == "" {
+		projectID = serviceAccount.ProjectID
+	}
+	if projectID == "" {
+		return nil, fmt.Errorf("FCM project id is missing")
+	}
+	tokURL := options.TokenURL
+	if tokURL == "" {
+		tokURL = tokenURL
+	}
+	endpoint := options.URL
+	if endpoint == "" {
+		endpoint = fmt.Sprintf("https://fcm.googleapis.com/v1/projects/%s/messages:send", url.PathEscape(projectID))
+	}
+	ttl := options.TTL
+	if ttl == "" {
+		ttl = "3600s"
+	}
+	httpClient := options.HTTPClient
+	if httpClient == nil {
+		httpClient = &http.Client{Timeout: 30 * time.Second}
+	}
+	return &Sender{
+		serviceAccount: serviceAccount,
+		projectID:      projectID,
+		tokenURL:       tokURL,
+		endpoint:       endpoint,
+		ttl:            ttl,
+		httpClient:     httpClient,
+	}, nil
+}
+
+func (s *Sender) accessToken() (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cachedAccessToken != "" && time.Until(s.accessTokenExpiry) > time.Minute {
+		return s.cachedAccessToken, nil
+	}
+	token, lifetime, err := getAccessToken(s.httpClient, s.serviceAccount, s.tokenURL)
+	if err != nil {
+		return "", err
+	}
+	s.cachedAccessToken = token
+	s.accessTokenExpiry = time.Now().Add(lifetime)
 	return token, nil
 }
 
-func SendPushNotifications(pushTokens []PushToken, envelope Envelope, options SendOptions) (SendResult, error) {
+func (s *Sender) SendPushNotifications(pushTokens []PushToken, envelope Envelope, service string) (SendResult, error) {
 	var fcmTokens []PushToken
 	for _, t := range pushTokens {
 		if t.Provider == "fcm" && t.Token != "" {
@@ -189,45 +267,16 @@ func SendPushNotifications(pushTokens []PushToken, envelope Envelope, options Se
 		return SendResult{Sent: 0, Responses: []interface{}{}}, nil
 	}
 
-	serviceAccount, err := loadServiceAccount(options.ServiceAccountPath)
+	accessToken, err := s.accessToken()
 	if err != nil {
 		return SendResult{}, err
 	}
-
-	projectID := options.ProjectID
-	if projectID == "" {
-		projectID = serviceAccount.ProjectID
-	}
-	if projectID == "" {
-		return SendResult{}, fmt.Errorf("FCM project id is missing")
-	}
-
-	tokURL := options.TokenURL
-	if tokURL == "" {
-		tokURL = tokenURL
-	}
-	accessToken, err := getAccessToken(serviceAccount, tokURL)
-	if err != nil {
-		return SendResult{}, err
-	}
-
-	endpoint := options.URL
-	if endpoint == "" {
-		endpoint = fmt.Sprintf("https://fcm.googleapis.com/v1/projects/%s/messages:send", url.PathEscape(projectID))
-	}
-
-	ttl := options.TTL
-	if ttl == "" {
-		ttl = "3600s"
-	}
-
-	service := options.Service
 	if service == "" {
 		service = "rep"
 	}
 
 	result := SendResult{
-		Sent:      len(fcmTokens),
+		Sent:      0,
 		Responses: make([]interface{}, 0, len(fcmTokens)),
 	}
 
@@ -247,7 +296,7 @@ func SendPushNotifications(pushTokens []PushToken, envelope Envelope, options Se
 				},
 				"android": map[string]interface{}{
 					"priority": "HIGH",
-					"ttl":      ttl,
+					"ttl":      s.ttl,
 				},
 			},
 		}
@@ -257,14 +306,14 @@ func SendPushNotifications(pushTokens []PushToken, envelope Envelope, options Se
 			return SendResult{}, err
 		}
 
-		req, err := http.NewRequest("POST", endpoint, bytes.NewReader(body))
+		req, err := http.NewRequest("POST", s.endpoint, bytes.NewReader(body))
 		if err != nil {
 			return SendResult{}, err
 		}
 		req.Header.Set("Authorization", "Bearer "+accessToken)
 		req.Header.Set("Content-Type", "application/json")
 
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := s.httpClient.Do(req)
 		if err != nil {
 			return SendResult{}, err
 		}
@@ -283,7 +332,26 @@ func SendPushNotifications(pushTokens []PushToken, envelope Envelope, options Se
 			return SendResult{}, fmt.Errorf("FCM send failed with HTTP %d: %s", resp.StatusCode, string(respBody))
 		}
 		result.Responses = append(result.Responses, parsed)
+		result.Sent++
 	}
 
 	return result, nil
+}
+
+func SendPushNotifications(pushTokens []PushToken, envelope Envelope, options SendOptions) (SendResult, error) {
+	hasFCMToken := false
+	for _, token := range pushTokens {
+		if token.Provider == "fcm" && token.Token != "" {
+			hasFCMToken = true
+			break
+		}
+	}
+	if !hasFCMToken {
+		return SendResult{Sent: 0, Responses: []interface{}{}}, nil
+	}
+	sender, err := NewSender(options)
+	if err != nil {
+		return SendResult{}, err
+	}
+	return sender.SendPushNotifications(pushTokens, envelope, options.Service)
 }

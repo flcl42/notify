@@ -109,6 +109,48 @@ func TestSendPushNotifications(t *testing.T) {
 	}
 }
 
+func TestSenderCachesGoogleAccessToken(t *testing.T) {
+	dir := t.TempDir()
+	serviceAccountPath := generateServiceAccount(t, dir)
+	tokenRequests := 0
+	fcmRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/token" {
+			tokenRequests++
+			w.Write([]byte(`{"access_token":"cached-token","expires_in":3600,"token_type":"Bearer"}`))
+			return
+		}
+		fcmRequests++
+		w.Write([]byte(`{"name":"projects/test/messages/1"}`))
+	}))
+	defer server.Close()
+
+	sender, err := NewSender(SendOptions{
+		ServiceAccountPath: serviceAccountPath,
+		TokenURL:           server.URL + "/token",
+		URL:                server.URL + "/fcm",
+	})
+	if err != nil {
+		t.Fatalf("new sender: %v", err)
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := sender.SendPushNotifications(
+			[]PushToken{{Provider: "fcm", Token: "token"}},
+			Envelope{Type: "notification", V: 1, SubscriptionID: "subscription", Nonce: "nonce", Ciphertext: "ciphertext"},
+			"test",
+		); err != nil {
+			t.Fatalf("send %d: %v", i+1, err)
+		}
+	}
+	if tokenRequests != 1 {
+		t.Fatalf("token requests = %d, want 1", tokenRequests)
+	}
+	if fcmRequests != 2 {
+		t.Fatalf("FCM requests = %d, want 2", fcmRequests)
+	}
+}
+
 // TestSendPushNotificationsDeliversDecryptableEnvelope guards the whole payload
 // contract: the phone rejects the envelope unless type, v, subscriptionId,
 // nonce and ciphertext all survive the trip through the FCM data map.

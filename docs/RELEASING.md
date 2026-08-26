@@ -2,7 +2,8 @@
 
 The release workflow follows the same tag-driven model as `flcl42/pr`. It tests
 the source on branches and pull requests. A `v*` or `release/*` tag additionally
-builds and publishes standalone CLI binaries plus a signed Android APK.
+builds and publishes standalone CLI binaries, static Linux relay binaries, and
+a signed Android APK.
 
 ## GitHub Secrets
 
@@ -18,7 +19,7 @@ Configure these repository secrets before pushing the first release tag:
 
 The Firebase Admin service-account JSON is deliberately not a GitHub secret. It
 is not needed to build the software and must not be embedded in an executable or
-APK. Keep it on each sender machine and configure its path with `rep credential`.
+APK. Keep it on the relay host, or on each sender machine that uses direct mode.
 
 The Firebase client file is embedded in every Android APK and is therefore not a
 server secret. It is stored as a GitHub secret only to keep project-specific
@@ -75,6 +76,8 @@ required by the workflow. A successful tagged run publishes:
 - `rep-windows-arm64.exe`
 - `rep-macos-x64`
 - `rep-macos-arm64`
+- `notify-server-linux-x64`
+- `notify-server-linux-arm64`
 - `private-notify-android.apk`
 - `install.ps1`
 - `SHA256SUMS.txt`

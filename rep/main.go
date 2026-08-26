@@ -2,7 +2,9 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -16,6 +18,7 @@ import (
 	"github.com/flcl42/notify/rep/internal/protocol"
 	"github.com/flcl42/notify/rep/internal/qr"
 	"github.com/flcl42/notify/rep/internal/registration"
+	"github.com/flcl42/notify/rep/internal/relay"
 	"github.com/flcl42/notify/rep/internal/version"
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
@@ -88,7 +91,7 @@ func waitForKeypress() error {
 	return err
 }
 
-func createSubscription(titleInput string, port int, host string, waitSeconds int, adbPath string, noUSB bool, replace bool) error {
+func createSubscription(titleInput string, port int, host string, waitSeconds int, adbPath string, noUSB bool, replace bool, modeOverride, serverURLOverride string) error {
 	title, err := promptForTitle(titleInput)
 	if err != nil {
 		return err
@@ -121,6 +124,13 @@ func createSubscription(titleInput string, port int, host string, waitSeconds in
 		Delivery:     "push",
 		PushTokens:   []config.PushToken{},
 		CreatedAt:    time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	mode, err := config.ResolveMode(cfg, modeOverride)
+	if err != nil {
+		return err
+	}
+	if mode == config.ModeServer {
+		return createServerSubscription(cfgPath, sub, replace, waitSeconds, config.ResolveServerURL(cfg, serverURLOverride))
 	}
 
 	if _, err := config.UpsertSubscription(cfgPath, sub, replace); err != nil {
@@ -185,6 +195,7 @@ func createSubscription(titleInput string, port int, host string, waitSeconds in
 	}
 
 	fmt.Printf("Title: %s\n", sub.Title)
+	fmt.Println("Mode: direct")
 	fmt.Printf("Config: %s\n", cfgPath)
 	fmt.Printf("Registration: %s\n", registrationURL)
 	fmt.Println("Scan this QR in the Android app. Treat it like a private key.")
@@ -202,8 +213,8 @@ func createSubscription(titleInput string, port int, host string, waitSeconds in
 	}()
 
 	select {
-	case reg := <-registeredCh:
-		fmt.Printf("Registered 1 push token(s) for \"%s\".\n", reg.Token)
+	case <-registeredCh:
+		fmt.Printf("Registered 1 push token(s) for \"%s\".\n", sub.Title)
 	case <-timeout:
 		return fmt.Errorf("timed out waiting for mobile push registration")
 	case <-keypressCh:
@@ -211,6 +222,81 @@ func createSubscription(titleInput string, port int, host string, waitSeconds in
 	}
 
 	return nil
+}
+
+func createServerSubscription(cfgPath string, sub config.Subscription, replace bool, waitSeconds int, serverURL string) error {
+	client, err := relay.NewClient(serverURL)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	provisioned, err := client.Provision(ctx, sub.ID, sub.Key)
+	cancel()
+	if err != nil {
+		return err
+	}
+	if _, err := config.UpsertSubscription(cfgPath, sub, replace); err != nil {
+		return err
+	}
+
+	pairingURL, err := protocol.CreatePairingURL(protocol.Subscription{
+		ID:           sub.ID,
+		Title:        sub.Title,
+		Name:         sub.Name,
+		DefaultTitle: sub.DefaultTitle,
+		Key:          sub.Key,
+		CreatedAt:    sub.CreatedAt,
+	}, provisioned.RegistrationURL)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("Title: %s\n", sub.Title)
+	fmt.Println("Mode: server")
+	fmt.Printf("Server: %s\n", serverURL)
+	fmt.Printf("Config: %s\n", cfgPath)
+	fmt.Printf("Registration: %s\n", provisioned.RegistrationURL)
+	fmt.Println("Scan this QR in the Android app. Treat it like a private key.")
+	if err := qr.PrintTerminal(pairingURL); err != nil {
+		return err
+	}
+	fmt.Println(pairingURL)
+	fmt.Println("Waiting for phone push-token registration. Press any key to stop...")
+
+	timeout := time.NewTimer(time.Duration(waitSeconds) * time.Second)
+	defer timeout.Stop()
+	poll := time.NewTicker(time.Second)
+	defer poll.Stop()
+	keypressCh := make(chan error, 1)
+	go func() {
+		keypressCh <- waitForKeypress()
+	}()
+	statusErrorShown := false
+	for {
+		select {
+		case <-poll.C:
+			statusCtx, statusCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			status, statusErr := client.Status(statusCtx, sub.ID, sub.Key)
+			statusCancel()
+			if statusErr != nil {
+				if !statusErrorShown {
+					fmt.Printf("Registration status check failed; continuing to retry: %v\n", statusErr)
+					statusErrorShown = true
+				}
+				continue
+			}
+			statusErrorShown = false
+			if status.RegisteredTokens > 0 {
+				fmt.Printf("Registered %d push token(s) for \"%s\".\n", status.RegisteredTokens, sub.Title)
+				return nil
+			}
+		case <-timeout.C:
+			return fmt.Errorf("timed out waiting for mobile push registration")
+		case <-keypressCh:
+			fmt.Println("Stopped. The private key remains in rep.yaml; run create --replace to rotate it.")
+			return nil
+		}
+	}
 }
 
 func resolveTitleAndBody(cfg config.Config, args []string) (*config.Subscription, string) {
@@ -223,7 +309,7 @@ func resolveTitleAndBody(cfg config.Config, args []string) (*config.Subscription
 	return nil, ""
 }
 
-func sendNotification(args []string, service string, fcmServiceAccount string, fcmProjectID string) error {
+func sendNotification(args []string, service string, fcmServiceAccount string, fcmProjectID string, modeOverride, serverURLOverride string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: rep <title> <notification text>")
 	}
@@ -276,13 +362,41 @@ func sendNotification(args []string, service string, fcmServiceAccount string, f
 		pushTokens = append(pushTokens, fcm.PushToken{Provider: t.Provider, Token: t.Token})
 	}
 
-	result, err := fcm.SendPushNotifications(pushTokens, fcm.Envelope{
+	fcmEnvelope := fcm.Envelope{
 		Type:           envelope.Type,
 		V:              envelope.V,
 		SubscriptionID: envelope.SubscriptionID,
 		Nonce:          envelope.Nonce,
 		Ciphertext:     envelope.Ciphertext,
-	}, fcm.SendOptions{
+	}
+	mode, err := config.ResolveMode(cfg, modeOverride)
+	if err != nil {
+		return err
+	}
+	if mode == config.ModeServer {
+		serverURL := config.ResolveServerURL(cfg, serverURLOverride)
+		client, err := relay.NewClient(serverURL)
+		if err != nil {
+			return err
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+		defer cancel()
+		serverResult, err := client.Send(ctx, sub.ID, sub.Key, service, fcmEnvelope, pushTokens)
+		var httpError *relay.HTTPError
+		if errors.As(err, &httpError) && httpError.StatusCode == 404 {
+			if _, provisionErr := client.Provision(ctx, sub.ID, sub.Key); provisionErr != nil {
+				return provisionErr
+			}
+			serverResult, err = client.Send(ctx, sub.ID, sub.Key, service, fcmEnvelope, pushTokens)
+		}
+		if err != nil {
+			return err
+		}
+		fmt.Printf("Sent \"%s\" notification through %s. Tokens: %d. Remaining today: %d total, %d for this QR.\n", sub.Title, serverURL, serverResult.Sent, serverResult.DailyRemaining, serverResult.SubscriptionDailyRemaining)
+		return nil
+	}
+
+	result, err := fcm.SendPushNotifications(pushTokens, fcmEnvelope, fcm.SendOptions{
 		Service:            service,
 		ServiceAccountPath: config.ResolveFcmServiceAccount(cfg, fcmServiceAccount),
 		ProjectID:          fcmProjectID,
@@ -330,6 +444,54 @@ func printConfigPath() error {
 	return nil
 }
 
+func configureMode(args []string, serverURLOverride string) error {
+	cfgPath, err := loadConfigPath()
+	if err != nil {
+		return err
+	}
+	cfg, err := config.LoadConfig(cfgPath)
+	if err != nil {
+		return err
+	}
+	if len(args) == 0 {
+		mode, err := config.ResolveMode(cfg, "")
+		if err != nil {
+			return err
+		}
+		fmt.Printf("Mode: %s\n", mode)
+		fmt.Printf("Server: %s\n", config.ResolveServerURL(cfg, ""))
+		return nil
+	}
+
+	mode, err := config.ResolveMode(cfg, args[0])
+	if err != nil {
+		return err
+	}
+	serverURL := strings.TrimSpace(serverURLOverride)
+	if len(args) == 2 {
+		if mode != config.ModeServer {
+			return fmt.Errorf("a server URL can only be set with server mode")
+		}
+		serverURL = args[1]
+	}
+	if serverURL != "" {
+		client, err := relay.NewClient(serverURL)
+		if err != nil {
+			return err
+		}
+		cfg.ServerURL = client.BaseURL
+	}
+	cfg.Mode = mode
+	if err := config.SaveConfig(cfgPath, cfg); err != nil {
+		return err
+	}
+	fmt.Printf("Stored mode %s in %s\n", mode, cfgPath)
+	if mode == config.ModeServer {
+		fmt.Printf("Server: %s\n", config.ResolveServerURL(cfg, ""))
+	}
+	return nil
+}
+
 func saveCredential(path string) error {
 	if path == "" {
 		return fmt.Errorf("service-account JSON path is required")
@@ -359,6 +521,8 @@ func main() {
 		fcmServiceAccount string
 		fcmProjectID      string
 		service           string
+		mode              string
+		serverURL         string
 	)
 
 	rootCmd := &cobra.Command{
@@ -367,21 +531,23 @@ func main() {
 		Long:  "rep sends encrypted Android notifications by title. Provide the title followed by the notification text.",
 		Args:  cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return sendNotification(args, service, fcmServiceAccount, fcmProjectID)
+			return sendNotification(args, service, fcmServiceAccount, fcmProjectID, mode, serverURL)
 		},
 	}
 	rootCmd.Version = version.Version
 	rootCmd.PersistentFlags().StringVar(&fcmServiceAccount, "fcm-service-account", "", "Firebase Admin service-account JSON path for this send")
 	rootCmd.PersistentFlags().StringVar(&fcmProjectID, "fcm-project-id", "", "Firebase project id; defaults to the service account project_id")
 	rootCmd.PersistentFlags().StringVar(&service, "service", "rep", "source service name")
+	rootCmd.PersistentFlags().StringVar(&mode, "mode", "", "delivery mode override: server or direct")
+	rootCmd.PersistentFlags().StringVar(&serverURL, "server-url", "", "relay server URL override")
 
 	var (
-		createPort       int
-		createHost       string
-		createWait       int
-		createAdb        string
-		createNoUSB      bool
-		createReplace    bool
+		createPort    int
+		createHost    string
+		createWait    int
+		createAdb     string
+		createNoUSB   bool
+		createReplace bool
 	)
 	createCmd := &cobra.Command{
 		Use:   "create [title]",
@@ -392,7 +558,7 @@ func main() {
 			if len(args) > 0 {
 				title = args[0]
 			}
-			return createSubscription(title, createPort, createHost, createWait, createAdb, createNoUSB, createReplace)
+			return createSubscription(title, createPort, createHost, createWait, createAdb, createNoUSB, createReplace, mode, serverURL)
 		},
 	}
 	createCmd.Flags().IntVarP(&createPort, "port", "p", 0, "pairing registration port")
@@ -427,7 +593,16 @@ func main() {
 		},
 	}
 
-	rootCmd.AddCommand(createCmd, listCmd, configCmd, credentialCmd)
+	modeCmd := &cobra.Command{
+		Use:   "mode [server|direct] [server-url]",
+		Short: "Show or store the default delivery mode.",
+		Args:  cobra.MaximumNArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return configureMode(args, serverURL)
+		},
+	}
+
+	rootCmd.AddCommand(createCmd, listCmd, configCmd, credentialCmd, modeCmd)
 
 	// Suppress default usage/error printing.
 	rootCmd.SilenceUsage = true

@@ -13,6 +13,12 @@ import (
 
 const defaultConfigName = "rep.yaml"
 
+const (
+	ModeServer       = "server"
+	ModeDirect       = "direct"
+	DefaultServerURL = "http://62.171.163.96:17891"
+)
+
 type PushToken struct {
 	Provider     string `yaml:"provider"`
 	Token        string `yaml:"token"`
@@ -34,6 +40,8 @@ type Subscription struct {
 type Config struct {
 	V                 int            `yaml:"v"`
 	DefaultPairPort   int            `yaml:"defaultPairPort"`
+	Mode              string         `yaml:"mode"`
+	ServerURL         string         `yaml:"serverUrl"`
 	FcmServiceAccount string         `yaml:"fcmServiceAccount,omitempty"`
 	Subscriptions     []Subscription `yaml:"subscriptions"`
 }
@@ -42,6 +50,8 @@ func DefaultConfig() Config {
 	return Config{
 		V:               1,
 		DefaultPairPort: 8788,
+		Mode:            ModeServer,
+		ServerURL:       DefaultServerURL,
 		Subscriptions:   []Subscription{},
 	}
 }
@@ -88,12 +98,12 @@ func LoadConfig(path string) (Config, error) {
 		return cfg, fmt.Errorf("parse %s: %w", path, err)
 	}
 
-	cfg.Subscriptions = normalizeSubscriptions(cfg.Subscriptions)
+	cfg = Normalize(cfg)
 	return cfg, nil
 }
 
 func SaveConfig(path string, cfg Config) error {
-	cfg.Subscriptions = normalizeSubscriptions(cfg.Subscriptions)
+	cfg = Normalize(cfg)
 
 	data, err := yaml.Marshal(cfg)
 	if err != nil {
@@ -104,6 +114,51 @@ func SaveConfig(path string, cfg Config) error {
 		return err
 	}
 	return os.WriteFile(path, data, 0o600)
+}
+
+func Normalize(cfg Config) Config {
+	cfg.Mode = strings.ToLower(strings.TrimSpace(cfg.Mode))
+	if cfg.Mode == "" {
+		cfg.Mode = ModeServer
+	}
+	if strings.TrimSpace(cfg.ServerURL) == "" {
+		cfg.ServerURL = DefaultServerURL
+	} else {
+		cfg.ServerURL = strings.TrimRight(strings.TrimSpace(cfg.ServerURL), "/")
+	}
+	cfg.Subscriptions = normalizeSubscriptions(cfg.Subscriptions)
+	return cfg
+}
+
+func ResolveMode(cfg Config, explicit string) (string, error) {
+	mode := strings.ToLower(strings.TrimSpace(explicit))
+	if mode == "" {
+		mode = strings.ToLower(strings.TrimSpace(os.Getenv("REP_MODE")))
+	}
+	if mode == "" {
+		mode = cfg.Mode
+	}
+	if mode == "" {
+		mode = ModeServer
+	}
+	if mode != ModeServer && mode != ModeDirect {
+		return "", fmt.Errorf("unsupported delivery mode %q; use server or direct", mode)
+	}
+	return mode, nil
+}
+
+func ResolveServerURL(cfg Config, explicit string) string {
+	serverURL := strings.TrimSpace(explicit)
+	if serverURL == "" {
+		serverURL = strings.TrimSpace(os.Getenv("REP_SERVER_URL"))
+	}
+	if serverURL == "" {
+		serverURL = cfg.ServerURL
+	}
+	if serverURL == "" {
+		serverURL = DefaultServerURL
+	}
+	return strings.TrimRight(serverURL, "/")
 }
 
 func normalizeSubscriptions(subs []Subscription) []Subscription {

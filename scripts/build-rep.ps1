@@ -35,6 +35,21 @@ try {
             throw "Build failed for $($target.Asset)"
         }
     }
+
+    foreach ($target in @(
+        @{ GOARCH = "amd64"; Asset = "notify-server-linux-x64" },
+        @{ GOARCH = "arm64"; Asset = "notify-server-linux-arm64" }
+    )) {
+        $env:GOOS = "linux"
+        $env:GOARCH = $target.GOARCH
+        $env:CGO_ENABLED = "0"
+        $output = Join-Path $OutputDirectory $target.Asset
+        Write-Host "Building $output..."
+        & go build -C $source -trimpath -ldflags "-s -w -X github.com/flcl42/notify/rep/internal/version.Version=$Version" -o $output ./cmd/notify-server
+        if ($LASTEXITCODE -ne 0) {
+            throw "Build failed for $($target.Asset)"
+        }
+    }
 }
 finally {
     Remove-Item Env:GOOS, Env:GOARCH, Env:CGO_ENABLED -ErrorAction SilentlyContinue

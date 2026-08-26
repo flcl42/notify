@@ -1,8 +1,8 @@
 {
   "name": "private-notify",
-  "version": "0.2.3",
+  "version": "0.3.0",
   "private": true,
-  "description": "Encrypted native Android notification subscriptions with a Go CLI and FCM sender.",
+  "description": "Encrypted native Android notifications with a Go CLI and optional FCM relay.",
   "scripts": {
     "android:build": "android\\gradlew.bat -p android assembleDebug",
     "android:install": "android\\gradlew.bat -p android installDebug",

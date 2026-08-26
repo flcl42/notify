@@ -33,9 +33,14 @@ jobs:
         working-directory: rep
         run: |
           GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X github.com/flcl42/notify/rep/internal/version.Version=test" -o /tmp/rep-linux-x64 .
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X github.com/flcl42/notify/rep/internal/version.Version=test" -o /tmp/notify-server-linux-x64 ./cmd/notify-server
           if readelf -l /tmp/rep-linux-x64 | grep -q INTERP; then
             echo "::error::rep-linux-x64 is dynamically linked and will fail on hosts with older glibc"
             readelf -d /tmp/rep-linux-x64
+            exit 1
+          fi
+          if readelf -l /tmp/notify-server-linux-x64 | grep -q INTERP; then
+            echo "::error::notify-server-linux-x64 is dynamically linked"
             exit 1
           fi
 
@@ -251,11 +256,61 @@ jobs:
         shell: bash
         run: rm -f android/app/google-services.json "$RUNNER_TEMP/private-notify-release.jks"
 
+  build-server:
+    name: build notify server ${{ matrix.goarch }}
+    needs: check-cli
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goarch: amd64
+            asset: notify-server-linux-x64
+          - goarch: arm64
+            asset: notify-server-linux-arm64
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.23"
+          cache-dependency-path: rep/go.sum
+      - name: Determine version
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#release/}"
+          version="${version#v}"
+          echo "REP_VERSION=$version" >> "$GITHUB_ENV"
+      - name: Build static relay server
+        working-directory: rep
+        env:
+          GOOS: linux
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: |
+          mkdir -p dist
+          go build -trimpath -ldflags "-s -w -X github.com/flcl42/notify/rep/internal/version.Version=$REP_VERSION" -o "dist/${{ matrix.asset }}" ./cmd/notify-server
+          if readelf -l "dist/${{ matrix.asset }}" | grep -q INTERP; then
+            echo "::error::${{ matrix.asset }} is dynamically linked"
+            exit 1
+          fi
+          if [[ "${{ matrix.goarch }}" == "amd64" ]]; then
+            actual_version=$("./dist/${{ matrix.asset }}" --version | awk '{print $3}')
+            test "$actual_version" = "$REP_VERSION"
+          fi
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.asset }}
+          path: rep/dist/${{ matrix.asset }}
+          if-no-files-found: error
+          compression-level: 0
+
   release:
     name: publish release
     needs:
       - build-cli
       - build-android
+      - build-server
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     permissions:

@@ -6,9 +6,10 @@ decrypts them locally with ChaCha20-Poly1305, stores them, and displays normal
 Android notifications. The standalone `rep` CLI, written in Go, creates QR subscriptions and
 sends encrypted messages by title.
 
-The project is self-hosted: the Android APK's Firebase client configuration and
-the sender's Firebase Admin service account must belong to the same Firebase
-project.
+`rep` has two delivery modes. The default `server` mode sends the already
+encrypted envelope through the hosted relay at `http://62.171.163.96:17891`, so
+the sender needs no Google credential. `direct` mode keeps the original fully
+local sender and uses a Firebase Admin service-account file on the CLI machine.
 
 ## Install
 
@@ -23,8 +24,8 @@ Windows, PowerShell:
 $repo='flcl42/notify'; $i=Join-Path $env:TEMP 'private-notify-install.ps1'; Invoke-WebRequest "https://github.com/$repo/releases/latest/download/install.ps1" -OutFile $i; powershell -NoProfile -ExecutionPolicy Bypass -File $i
 ```
 
-Pass the local Firebase Admin credential during installation when it is already
-available:
+Direct-mode users can pass the local Firebase Admin credential during
+installation:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File $i -CredentialPath "D:\path\to\firebase-admin-service-account.json"
@@ -54,13 +55,6 @@ local subscriptions and messages; install the release APK and pair it again.
 
 ## First Use
 
-Complete [Firebase Setup](#firebase-setup-generate-the-required-files), then
-store the local Firebase Admin service-account path:
-
-```powershell
-rep credential "D:\path\to\firebase-admin-service-account.json"
-```
-
 Create a private key for a notification title and scan the QR with the Android
 app or a general QR scanner:
 
@@ -80,18 +74,60 @@ rep list
 ```
 
 Packaged builds store `rep.yaml` next to the executable. It contains private
-notification keys, push tokens, and the path to the Firebase Admin JSON. Back it
-up as sensitive data.
+notification keys, any direct-mode push tokens, delivery-mode settings, and an
+optional path to the Firebase Admin JSON. Back it up as sensitive data.
+
+## Delivery Modes
+
+Show or change the persisted mode:
+
+```powershell
+rep mode
+rep mode server
+rep mode direct
+```
+
+Server mode is the default for new and existing configurations. It pairs the
+phone directly with the relay, then signs every relay request with an Ed25519
+identity derived from the QR key. The relay stores the signing public key and
+FCM routing token, but never the QR key or notification plaintext. The hosted
+relay allows at most 100,000 device deliveries in total per UTC day and 1,000
+per QR subscription per UTC day.
+
+The built-in bare-IP endpoint uses HTTP. Notification title/body contents remain
+encrypted and signed requests cannot be modified or forged, but a network
+observer can still see timing and FCM routing metadata during registration. Use
+an HTTPS URL for a custom relay when transport-metadata privacy is required.
+
+Override the relay temporarily or persist another relay:
+
+```powershell
+rep --server-url http://relay.example:17891 "Build Alerts" "Done"
+rep mode server http://relay.example:17891
+```
+
+Direct mode sends to FCM from the CLI machine. It requires the Firebase Admin
+credential and local/LAN or ADB access during pairing:
+
+```powershell
+rep mode direct
+rep credential "D:\secure\firebase-admin-service-account.json"
+rep create "Build Alerts" --replace
+```
+
+`--mode server` and `--mode direct` override the stored mode for one command.
 
 ## Firebase Setup: Generate the Required Files
 
-Private Notify needs two JSON files from one Firebase project. They serve very
-different purposes:
+This setup is required when building an Android release, operating a relay, or
+using direct mode. Users of the published APK with the default hosted relay do
+not need either file. A custom deployment needs two JSON files from one Firebase
+project:
 
 | File | Used by | Secret | Destination |
 | --- | --- | --- | --- |
 | `google-services.json` | Android APK | No; Firebase embeds these client identifiers in the APK | `android/app/google-services.json` |
-| Firebase Admin service-account JSON | `rep` sender | Yes; it contains a private key | Keep outside the repository and pass its path to `rep credential` |
+| Firebase Admin service-account JSON | Relay or direct-mode `rep` sender | Yes; it contains a private key | Keep outside the repository; pass its path to the server or `rep credential` |
 
 The Android client and Admin key must have the same Firebase `project_id`.
 
@@ -148,14 +184,14 @@ and [server requirements](https://firebase.google.com/docs/cloud-messaging/serve
 2. Select **Firebase Admin SDK**.
 3. Select **Generate new private key**, then confirm **Generate key**.
 4. Move the downloaded JSON to a secure local directory outside this checkout.
-5. Configure its path on every sender machine:
+5. For direct mode, configure its path on every sender machine:
 
    ```powershell
    rep credential "D:\secure\firebase-admin-service-account.json"
    ```
 
-The Admin JSON authorizes sends to FCM and contains a private key. Never commit
-it, upload it as a GitHub Actions secret, put it in `rep.exe`, attach it to a
+The Admin JSON authorizes sends to FCM and contains a private key. A relay reads
+it only on the server. Never commit it, put it in `rep.exe`, attach it to a
 release, or encode it into a QR. If it is exposed, revoke that service-account
 key in Google Cloud IAM and generate a replacement.
 
@@ -202,12 +238,12 @@ Build the CLI binaries for all platforms:
 
 ```powershell
 # Windows
-.\scripts\build-rep.ps1 -Version 0.2.0
+.\scripts\build-rep.ps1 -Version 0.3.0
 ```
 
 ```bash
 # Linux / macOS / WSL
-./scripts/build-rep.sh 0.2.0
+./scripts/build-rep.sh 0.3.0
 ```
 
 Run the Go tests:
@@ -227,13 +263,32 @@ npm run android:install
 If `google-services.json` is absent, the source still compiles but Firebase
 registration is disabled.
 
+Build and run the Linux relay:
+
+```bash
+cd rep
+CGO_ENABLED=0 go build -o notify-server ./cmd/notify-server
+./notify-server \
+  --listen :17891 \
+  --public-url http://your-server:17891 \
+  --state /var/lib/private-notify/state.json \
+  --fcm-service-account /secure/firebase-admin-service-account.json
+```
+
+The defaults enforce 100,000 total and 1,000 per-subscription FCM deliveries
+per UTC day. Relay state persists both counters across restarts. See
+[`deploy/private-notify.service`](deploy/private-notify.service) for a systemd
+unit with automatic restart.
+
 ## How It Works
 
 Pairing creates a random 256-bit key and encodes it with the default title and a
-short-lived registration URL in the QR. The Android app obtains an FCM token and
-returns it to the CLI. For each send, `rep` encrypts the title, body, and metadata
-with ChaCha20-Poly1305 and submits only the encrypted envelope and routing fields
-to FCM. Android decrypts the envelope before storing or displaying it.
+registration URL in the QR. The Android app obtains an FCM token and returns it
+to either the relay or the direct-mode CLI. For each send, `rep` encrypts the
+title, body, and metadata locally with ChaCha20-Poly1305. In server mode it signs
+the encrypted request; the relay checks the signature and quotas, then submits
+the opaque envelope to FCM. Android decrypts the envelope before storing or
+displaying it.
 
 The phone keeps no custom network connection open. Android and Google Play
 services manage push wakeups, which is substantially cheaper at idle than a
@@ -246,8 +301,9 @@ future messages for that subscription until the title is rotated.
 ## Release
 
 Branch and pull-request workflows test the CLI and Android build. Tags such as
-`release/0.1.0` build six standalone CLI assets and a signed APK, verify the APK
-signature, generate SHA-256 checksums, and publish a GitHub release. Android
+`release/0.3.0` build six standalone CLI assets, two static Linux relay assets,
+and a signed APK, verify the APK signature, generate SHA-256 checksums, and
+publish a GitHub release. Android
 signing and Firebase client configuration use repository secrets; GitHub's
 built-in token publishes the release.
 

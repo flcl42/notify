@@ -141,5 +141,7 @@ if (-not $SkipAndroid) {
 Write-Host "Installed CLI: $installedCli"
 Write-Host "Android APK:  $installedApk"
 if (-not $CredentialPath) {
-    Write-Host 'Next: rep credential "C:\path\to\firebase-admin-service-account.json"'
+    Write-Host 'Default delivery uses the hosted relay; no local Firebase Admin key is required.'
+    Write-Host 'Next: rep create "Build Alerts"'
+    Write-Host 'For direct mode: rep mode direct; rep credential "C:\path\to\firebase-admin-service-account.json"'
 }

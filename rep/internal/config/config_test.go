@@ -18,6 +18,9 @@ func TestLoadSaveConfig(t *testing.T) {
 	if cfg.DefaultPairPort != 8788 {
 		t.Fatalf("default port mismatch: %d", cfg.DefaultPairPort)
 	}
+	if cfg.Mode != ModeServer || cfg.ServerURL != DefaultServerURL {
+		t.Fatalf("unexpected defaults: mode=%q server=%q", cfg.Mode, cfg.ServerURL)
+	}
 	if len(cfg.Subscriptions) != 0 {
 		t.Fatalf("expected no subscriptions")
 	}

@@ -28,4 +28,13 @@ for target in "${TARGETS[@]}"; do
         -o "$output" .
 done
 
+for target in "amd64:notify-server-linux-x64" "arm64:notify-server-linux-arm64"; do
+    IFS=':' read -r GOARCH ASSET <<< "$target"
+    output="$OUTPUT_DIR/$ASSET"
+    echo "Building $output..."
+    GOOS=linux GOARCH="$GOARCH" CGO_ENABLED=0 go build -C "$SOURCE_DIR" -trimpath \
+        -ldflags "-s -w -X github.com/flcl42/notify/rep/internal/version.Version=$VERSION" \
+        -o "$output" ./cmd/notify-server
+done
+
 echo "Done. Assets in $OUTPUT_DIR"
