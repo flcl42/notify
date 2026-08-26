@@ -62,9 +62,15 @@ app or a general QR scanner:
 rep create "Build Alerts"
 ```
 
-The QR is an app-specific `dev.privatenotify://pair?...` URL. Android registers
-silently after the link is opened. Press any key in `rep create` to stop waiting;
-the generated key remains in `rep.yaml`. Use `--replace` to rotate it.
+In default server mode the QR is a normal
+`https://notify.apps.flcl.me/pair#payload=...` URL, so Android's system scanner
+can open it directly in the installed `dev.privatenotify` app through a verified
+App Link. The HTTPS page also offers an app-opening fallback for browsers that
+do not hand off the link automatically. The private payload stays in the URL
+fragment, which is not sent in the HTTP request, and is removed from browser
+history by the fallback page. Android registers silently after the app opens.
+Press any key in `rep create` to stop waiting; the generated key remains in
+`rep.yaml`. Use `--replace` to rotate it.
 
 Send later without maintaining a phone connection:
 
@@ -94,10 +100,12 @@ FCM routing token, but never the QR key or notification plaintext. The hosted
 relay allows at most 100,000 device deliveries in total per UTC day and 1,000
 per QR subscription per UTC day.
 
-The built-in bare-IP endpoint uses HTTP. Notification title/body contents remain
-encrypted and signed requests cannot be modified or forged, but a network
-observer can still see timing and FCM routing metadata during registration. Use
-an HTTPS URL for a custom relay when transport-metadata privacy is required.
+The scanner launch page and phone registration callback use HTTPS so their code
+and routing token cannot be intercepted. The built-in bare-IP CLI endpoint uses
+HTTP: notification title/body contents remain encrypted and signed sends cannot
+be modified or forged, but a network observer can still see send timing and
+routing identifiers. Use an HTTPS URL for a custom relay when that metadata
+privacy is required too.
 
 Override the relay temporarily or persist another relay:
 
@@ -238,12 +246,12 @@ Build the CLI binaries for all platforms:
 
 ```powershell
 # Windows
-.\scripts\build-rep.ps1 -Version 0.3.0
+.\scripts\build-rep.ps1 -Version 0.3.1
 ```
 
 ```bash
 # Linux / macOS / WSL
-./scripts/build-rep.sh 0.3.0
+./scripts/build-rep.sh 0.3.1
 ```
 
 Run the Go tests:
@@ -301,7 +309,7 @@ future messages for that subscription until the title is rotated.
 ## Release
 
 Branch and pull-request workflows test the CLI and Android build. Tags such as
-`release/0.3.0` build six standalone CLI assets, two static Linux relay assets,
+`release/0.3.1` build six standalone CLI assets, two static Linux relay assets,
 and a signed APK, verify the APK signature, generate SHA-256 checksums, and
 publish a GitHub release. Android
 signing and Firebase client configuration use repository secrets; GitHub's

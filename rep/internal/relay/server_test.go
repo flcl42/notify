@@ -252,6 +252,102 @@ func TestRelayRejectsReplayWrongKeyAndKeyConflict(t *testing.T) {
 	}
 }
 
+func TestBrowserPairingURLKeepsCredentialOutOfHTTPRequest(t *testing.T) {
+	now := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
+	store, err := OpenStore(filepath.Join(t.TempDir(), "state.json"), 10, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	relayServer, err := NewServer(ServerOptions{Store: store, Sender: &recordingSender{}, Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestURI := ""
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestURI = r.RequestURI
+		relayServer.Handler().ServeHTTP(w, r)
+	}))
+	defer server.Close()
+	client := newTestClient(t, server.URL, now)
+
+	key := testKey(5)
+	applicationURL, err := protocol.CreatePairingURL(protocol.Subscription{
+		ID:           uuid.Must(uuid.NewRandom()).String(),
+		Name:         "System Scanner",
+		DefaultTitle: "System Scanner",
+		Key:          key,
+	}, "http://registration.invalid/register")
+	if err != nil {
+		t.Fatal(err)
+	}
+	browserURL, err := client.BrowserPairingURL(applicationURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(browserURL, server.URL+"/pair#payload=") {
+		t.Fatalf("unexpected browser pairing URL: %s", browserURL)
+	}
+
+	response, err := http.Get(browserURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, err := io.ReadAll(response.Body)
+	response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requestURI != "/pair" {
+		t.Fatalf("pairing credential reached HTTP server in request URI %q", requestURI)
+	}
+	if bytes.Contains(page, []byte(key)) || bytes.Contains(page, []byte(strings.TrimPrefix(browserURL, server.URL+"/pair#payload="))) {
+		t.Fatal("pairing page contains the QR credential")
+	}
+	if !bytes.Contains(page, []byte("intent://pair")) || !bytes.Contains(page, []byte("package=dev.privatenotify")) {
+		t.Fatal("pairing page does not launch the Android package")
+	}
+	if response.Header.Get("Cache-Control") != "no-store" || response.Header.Get("Referrer-Policy") != "no-referrer" {
+		t.Fatalf("missing private pairing response headers: %v", response.Header)
+	}
+}
+
+func TestRelayPublishesAndroidAppLinkAssociation(t *testing.T) {
+	now := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
+	server, _ := newTestRelay(t, filepath.Join(t.TempDir(), "state.json"), now, 10, 10, &recordingSender{})
+	defer server.Close()
+
+	response, err := http.Get(server.URL + "/.well-known/assetlinks.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("asset links returned HTTP %d", response.StatusCode)
+	}
+	if response.Header.Get("Content-Type") != "application/json; charset=utf-8" {
+		t.Fatalf("unexpected content type: %q", response.Header.Get("Content-Type"))
+	}
+
+	var statements []struct {
+		Relation []string `json:"relation"`
+		Target   struct {
+			Namespace    string   `json:"namespace"`
+			PackageName  string   `json:"package_name"`
+			Fingerprints []string `json:"sha256_cert_fingerprints"`
+		} `json:"target"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&statements); err != nil {
+		t.Fatalf("decode asset links: %v", err)
+	}
+	if len(statements) != 1 || len(statements[0].Relation) != 1 || statements[0].Relation[0] != "delegate_permission/common.handle_all_urls" {
+		t.Fatalf("unexpected app-link relations: %+v", statements)
+	}
+	target := statements[0].Target
+	if target.Namespace != "android_app" || target.PackageName != "dev.privatenotify" || len(target.Fingerprints) != 1 || target.Fingerprints[0] != "22:15:50:E1:02:FE:B2:67:00:B4:51:6D:EE:E7:D4:18:98:03:BF:09:81:71:96:84:00:92:79:85:AA:3C:A8:DD" {
+		t.Fatalf("unexpected app-link target: %+v", target)
+	}
+}
+
 // errorsAs keeps the assertions readable without shadowing the package name in tests.
 func errorsAs(err error, target interface{}) bool {
 	return errors.As(err, target)

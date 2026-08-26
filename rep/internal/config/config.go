@@ -14,9 +14,10 @@ import (
 const defaultConfigName = "rep.yaml"
 
 const (
-	ModeServer       = "server"
-	ModeDirect       = "direct"
-	DefaultServerURL = "http://62.171.163.96:17891"
+	ModeServer        = "server"
+	ModeDirect        = "direct"
+	DefaultServerURL  = "http://62.171.163.96:17891"
+	DefaultPairingURL = "https://notify.apps.flcl.me"
 )
 
 type PushToken struct {
@@ -159,6 +160,14 @@ func ResolveServerURL(cfg Config, explicit string) string {
 		serverURL = DefaultServerURL
 	}
 	return strings.TrimRight(serverURL, "/")
+}
+
+func ResolvePairingBaseURL(serverURL string) string {
+	serverURL = strings.TrimRight(strings.TrimSpace(serverURL), "/")
+	if strings.EqualFold(serverURL, DefaultServerURL) {
+		return DefaultPairingURL
+	}
+	return serverURL
 }
 
 func normalizeSubscriptions(subs []Subscription) []Subscription {

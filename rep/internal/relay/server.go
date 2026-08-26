@@ -69,6 +69,10 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.Method == http.MethodGet && r.URL.Path == "/health":
 		writeJSON(w, http.StatusOK, map[string]interface{}{"status": "ok", "time": s.now().UTC().Format(time.RFC3339)})
+	case r.Method == http.MethodGet && r.URL.Path == "/.well-known/assetlinks.json":
+		s.handleAndroidAssetLinks(w)
+	case r.Method == http.MethodGet && r.URL.Path == "/pair":
+		s.handlePairingRedirect(w)
 	case r.Method == http.MethodPost && r.URL.Path == "/v1/subscriptions":
 		s.handleProvision(w, r)
 	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/subscriptions/") && strings.HasSuffix(r.URL.Path, "/status"):
@@ -81,6 +85,67 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not found")
 	}
 }
+
+func (s *Server) handleAndroidAssetLinks(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "public, max-age=3600")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(http.StatusOK)
+	_, _ = io.WriteString(w, androidAssetLinksDocument)
+}
+
+const androidAssetLinksDocument = `[{"relation":["delegate_permission/common.handle_all_urls"],"target":{"namespace":"android_app","package_name":"dev.privatenotify","sha256_cert_fingerprints":["22:15:50:E1:02:FE:B2:67:00:B4:51:6D:EE:E7:D4:18:98:03:BF:09:81:71:96:84:00:92:79:85:AA:3C:A8:DD"]}}]`
+
+func (s *Server) handlePairingRedirect(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'")
+	w.WriteHeader(http.StatusOK)
+	_, _ = io.WriteString(w, pairingRedirectPage)
+}
+
+const pairingRedirectPage = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Open Private Notify</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 0; min-height: 100vh; display: grid; place-items: center; background: #f5f5f5; color: #171717; }
+    main { width: min(28rem, calc(100% - 2rem)); text-align: center; }
+    a { display: inline-block; margin-top: 1rem; padding: .8rem 1rem; background: #171717; color: white; text-decoration: none; border-radius: 6px; }
+  </style>
+</head>
+<body>
+  <main>
+    <p id="status">Opening Private Notify...</p>
+    <a id="open" hidden>Open Private Notify</a>
+  </main>
+  <script>
+    (() => {
+      const payload = new URLSearchParams(location.hash.slice(1)).get('payload');
+      const status = document.getElementById('status');
+      const open = document.getElementById('open');
+      if (!payload || !/^[A-Za-z0-9_-]+$/.test(payload)) {
+        status.textContent = 'This pairing link is invalid. Scan the QR again.';
+        return;
+      }
+
+      const encoded = encodeURIComponent(payload);
+      const intent = 'intent://pair?payload=' + encoded + '#Intent;scheme=dev.privatenotify;package=dev.privatenotify;end';
+      open.href = intent;
+      open.hidden = false;
+      history.replaceState(null, '', location.pathname);
+      location.replace(intent);
+      setTimeout(() => {
+        status.textContent = 'Private Notify did not open automatically.';
+      }, 1200);
+    })();
+  </script>
+</body>
+</html>`
 
 func (s *Server) handleProvision(w http.ResponseWriter, r *http.Request) {
 	body, err := readBody(w, r)

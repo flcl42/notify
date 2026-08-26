@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/flcl42/notify/rep/internal/fcm"
+	"github.com/flcl42/notify/rep/internal/protocol"
 )
 
 type Client struct {
@@ -40,6 +41,19 @@ func NewClient(baseURL string) (*Client, error) {
 		HTTPClient: &http.Client{Timeout: 20 * time.Second},
 		Now:        time.Now,
 	}, nil
+}
+
+func (c *Client) BrowserPairingURL(applicationURL string) (string, error) {
+	parsed, err := url.Parse(applicationURL)
+	if err != nil || parsed.Scheme != protocol.PairingScheme || parsed.Host != "pair" {
+		return "", fmt.Errorf("invalid Private Notify application URL")
+	}
+	payload := parsed.Query().Get("payload")
+	if payload == "" {
+		return "", fmt.Errorf("Private Notify application URL has no pairing payload")
+	}
+	fragment := url.Values{"payload": []string{payload}}.Encode()
+	return c.BaseURL + "/pair#" + fragment, nil
 }
 
 func (c *Client) Provision(ctx context.Context, subscriptionID, subscriptionKey string) (ProvisionResponse, error) {

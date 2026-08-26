@@ -14,17 +14,26 @@ import javax.crypto.spec.SecretKeySpec;
 final class Protocol {
     static final String PAIRING_SCHEME = "dev.privatenotify";
     private static final String LEGACY_PAIRING_SCHEME = "notify";
+    private static final String PAIRING_LINK_SCHEME = "https";
+    private static final String PAIRING_LINK_HOST = "notify.apps.flcl.me";
+    private static final String PAIRING_LINK_PATH = "/pair";
 
     private Protocol() {
     }
 
     static JSONObject parsePairingCode(String raw) throws Exception {
         Uri uri = Uri.parse(raw.trim());
-        if (!isPairingScheme(uri.getScheme()) || !"pair".equals(uri.getHost())) {
+        boolean applicationLink = isPairingScheme(uri.getScheme()) && "pair".equals(uri.getHost());
+        boolean verifiedWebLink = PAIRING_LINK_SCHEME.equals(uri.getScheme())
+                && PAIRING_LINK_HOST.equals(uri.getHost())
+                && PAIRING_LINK_PATH.equals(uri.getPath());
+        if (!applicationLink && !verifiedWebLink) {
             throw new IllegalArgumentException("QR code is not a Private Notify pairing code.");
         }
 
-        String payload = uri.getQueryParameter("payload");
+        String payload = applicationLink
+                ? uri.getQueryParameter("payload")
+                : fragmentParameter(uri, "payload");
         if (payload == null || payload.isEmpty()) {
             throw new IllegalArgumentException("Pairing code has no payload.");
         }
@@ -47,6 +56,14 @@ final class Protocol {
 
     private static boolean isPairingScheme(String scheme) {
         return PAIRING_SCHEME.equals(scheme) || LEGACY_PAIRING_SCHEME.equals(scheme);
+    }
+
+    private static String fragmentParameter(Uri uri, String name) {
+        String fragment = uri.getEncodedFragment();
+        if (fragment == null || fragment.isEmpty()) {
+            return null;
+        }
+        return Uri.parse("https://fragment.invalid/?" + fragment).getQueryParameter(name);
     }
 
     static JSONObject decryptNotification(JSONObject subscription, String envelopeJson) throws Exception {

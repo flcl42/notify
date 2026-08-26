@@ -239,7 +239,7 @@ func createServerSubscription(cfgPath string, sub config.Subscription, replace b
 		return err
 	}
 
-	pairingURL, err := protocol.CreatePairingURL(protocol.Subscription{
+	applicationURL, err := protocol.CreatePairingURL(protocol.Subscription{
 		ID:           sub.ID,
 		Title:        sub.Title,
 		Name:         sub.Name,
@@ -247,6 +247,14 @@ func createServerSubscription(cfgPath string, sub config.Subscription, replace b
 		Key:          sub.Key,
 		CreatedAt:    sub.CreatedAt,
 	}, provisioned.RegistrationURL)
+	if err != nil {
+		return err
+	}
+	pairingClient, err := relay.NewClient(config.ResolvePairingBaseURL(serverURL))
+	if err != nil {
+		return err
+	}
+	pairingURL, err := pairingClient.BrowserPairingURL(applicationURL)
 	if err != nil {
 		return err
 	}

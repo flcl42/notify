@@ -57,6 +57,15 @@ func TestLoadSaveConfig(t *testing.T) {
 	}
 }
 
+func TestResolvePairingBaseURL(t *testing.T) {
+	if actual := ResolvePairingBaseURL(DefaultServerURL); actual != DefaultPairingURL {
+		t.Fatalf("default pairing URL = %q, want %q", actual, DefaultPairingURL)
+	}
+	if actual := ResolvePairingBaseURL("https://relay.example/"); actual != "https://relay.example" {
+		t.Fatalf("custom pairing URL = %q", actual)
+	}
+}
+
 func TestUpsertAndFind(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "rep.yaml")
