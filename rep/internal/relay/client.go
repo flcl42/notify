@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/flcl42/notify/rep/internal/config"
 	"github.com/flcl42/notify/rep/internal/fcm"
 	"github.com/flcl42/notify/rep/internal/protocol"
 )
@@ -36,9 +37,13 @@ func NewClient(baseURL string) (*Client, error) {
 	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
 		return nil, fmt.Errorf("invalid relay server URL %q", baseURL)
 	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	if config.IsHostedRelayURL(baseURL) {
+		transport.Proxy = nil
+	}
 	return &Client{
 		BaseURL:    baseURL,
-		HTTPClient: &http.Client{Timeout: 20 * time.Second},
+		HTTPClient: &http.Client{Transport: transport, Timeout: 20 * time.Second},
 		Now:        time.Now,
 	}, nil
 }
@@ -120,6 +125,9 @@ func (c *Client) doJSON(ctx context.Context, method, path string, requestValue, 
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
+		if method == http.MethodPost && path == "/v1/send" {
+			return fmt.Errorf("relay response was not received; notification may already have been delivered: %w", err)
+		}
 		return fmt.Errorf("relay request failed: %w", err)
 	}
 	defer resp.Body.Close()

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -63,6 +64,24 @@ func TestResolvePairingBaseURL(t *testing.T) {
 	}
 	if actual := ResolvePairingBaseURL("https://relay.example/"); actual != "https://relay.example" {
 		t.Fatalf("custom pairing URL = %q", actual)
+	}
+}
+
+func TestLoadMigratesLegacyHostedRelayURL(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rep.yaml")
+	if err := os.WriteFile(path, []byte("v: 1\nmode: server\nserverUrl: http://62.171.163.96:17891\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ServerURL != DefaultServerURL {
+		t.Fatalf("legacy relay URL was not migrated: %q", cfg.ServerURL)
+	}
+	if !IsHostedRelayURL("http://62.171.163.96:17891/") || !IsHostedRelayURL(DefaultServerURL) {
+		t.Fatal("hosted relay URL detection failed")
 	}
 }
 

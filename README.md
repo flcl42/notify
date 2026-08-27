@@ -7,7 +7,7 @@ Android notifications. The standalone `rep` CLI, written in Go, creates QR subsc
 sends encrypted messages by title.
 
 `rep` has two delivery modes. The default `server` mode sends the already
-encrypted envelope through the hosted relay at `http://62.171.163.96:17891`, so
+encrypted envelope through the hosted relay at `https://notify.apps.flcl.me`, so
 the sender needs no Google credential. `direct` mode keeps the original fully
 local sender and uses a Firebase Admin service-account file on the CLI machine.
 
@@ -100,12 +100,11 @@ FCM routing token, but never the QR key or notification plaintext. The hosted
 relay allows at most 100,000 device deliveries in total per UTC day and 1,000
 per QR subscription per UTC day.
 
-The scanner launch page and phone registration callback use HTTPS so their code
-and routing token cannot be intercepted. The built-in bare-IP CLI endpoint uses
-HTTP: notification title/body contents remain encrypted and signed sends cannot
-be modified or forged, but a network observer can still see send timing and
-routing identifiers. Use an HTTPS URL for a custom relay when that metadata
-privacy is required too.
+The hosted CLI endpoint, scanner launch page, and phone registration callback
+all use HTTPS. `rep` connects directly to the built-in hosted relay instead of
+routing it through `HTTP_PROXY` or `HTTPS_PROXY`; custom relay URLs retain normal
+environment-proxy behavior. Notification title and body contents remain
+end-to-end encrypted through either mode.
 
 Override the relay temporarily or persist another relay:
 
@@ -246,12 +245,12 @@ Build the CLI binaries for all platforms:
 
 ```powershell
 # Windows
-.\scripts\build-rep.ps1 -Version 0.3.1
+.\scripts\build-rep.ps1 -Version 0.3.2
 ```
 
 ```bash
 # Linux / macOS / WSL
-./scripts/build-rep.sh 0.3.1
+./scripts/build-rep.sh 0.3.2
 ```
 
 Run the Go tests:
@@ -309,7 +308,7 @@ future messages for that subscription until the title is rotated.
 ## Release
 
 Branch and pull-request workflows test the CLI and Android build. Tags such as
-`release/0.3.1` build six standalone CLI assets, two static Linux relay assets,
+`release/0.3.2` build six standalone CLI assets, two static Linux relay assets,
 and a signed APK, verify the APK signature, generate SHA-256 checksums, and
 publish a GitHub release. Android
 signing and Firebase client configuration use repository secrets; GitHub's

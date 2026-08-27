@@ -16,8 +16,9 @@ const defaultConfigName = "rep.yaml"
 const (
 	ModeServer        = "server"
 	ModeDirect        = "direct"
-	DefaultServerURL  = "http://62.171.163.96:17891"
+	DefaultServerURL  = "https://notify.apps.flcl.me"
 	DefaultPairingURL = "https://notify.apps.flcl.me"
+	legacyServerURL   = "http://62.171.163.96:17891"
 )
 
 type PushToken struct {
@@ -122,7 +123,7 @@ func Normalize(cfg Config) Config {
 	if cfg.Mode == "" {
 		cfg.Mode = ModeServer
 	}
-	if strings.TrimSpace(cfg.ServerURL) == "" {
+	if strings.TrimSpace(cfg.ServerURL) == "" || IsHostedRelayURL(cfg.ServerURL) {
 		cfg.ServerURL = DefaultServerURL
 	} else {
 		cfg.ServerURL = strings.TrimRight(strings.TrimSpace(cfg.ServerURL), "/")
@@ -156,7 +157,7 @@ func ResolveServerURL(cfg Config, explicit string) string {
 	if serverURL == "" {
 		serverURL = cfg.ServerURL
 	}
-	if serverURL == "" {
+	if serverURL == "" || IsHostedRelayURL(serverURL) {
 		serverURL = DefaultServerURL
 	}
 	return strings.TrimRight(serverURL, "/")
@@ -164,10 +165,15 @@ func ResolveServerURL(cfg Config, explicit string) string {
 
 func ResolvePairingBaseURL(serverURL string) string {
 	serverURL = strings.TrimRight(strings.TrimSpace(serverURL), "/")
-	if strings.EqualFold(serverURL, DefaultServerURL) {
+	if IsHostedRelayURL(serverURL) {
 		return DefaultPairingURL
 	}
 	return serverURL
+}
+
+func IsHostedRelayURL(serverURL string) bool {
+	serverURL = strings.TrimRight(strings.TrimSpace(serverURL), "/")
+	return strings.EqualFold(serverURL, DefaultServerURL) || strings.EqualFold(serverURL, legacyServerURL)
 }
 
 func normalizeSubscriptions(subs []Subscription) []Subscription {
