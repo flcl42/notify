@@ -85,6 +85,68 @@ func TestLoadMigratesLegacyHostedRelayURL(t *testing.T) {
 	}
 }
 
+func TestMigrateLegacyConfigFile(t *testing.T) {
+	dir := t.TempDir()
+	legacyPath := filepath.Join(dir, legacyConfigName)
+	targetPath := filepath.Join(dir, defaultConfigName)
+	legacy := []byte("v: 1\nmode: server\nserverUrl: https://notify.apps.flcl.me\n")
+	if err := os.WriteFile(legacyPath, legacy, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	actualPath, err := migrateLegacyConfig(targetPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if actualPath != targetPath {
+		t.Fatalf("migrated path = %q, want %q", actualPath, targetPath)
+	}
+	migrated, err := os.ReadFile(targetPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(migrated) != string(legacy) {
+		t.Fatalf("migrated config changed contents: %q", migrated)
+	}
+	if _, err := os.Stat(legacyPath); err != nil {
+		t.Fatalf("legacy config should remain available: %v", err)
+	}
+
+	if err := os.WriteFile(targetPath, []byte("existing"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := migrateLegacyConfig(targetPath); err != nil {
+		t.Fatal(err)
+	}
+	unchanged, _ := os.ReadFile(targetPath)
+	if string(unchanged) != "existing" {
+		t.Fatalf("existing nfy config was overwritten: %q", unchanged)
+	}
+}
+
+func TestNfyEnvironmentVariablesTakePrecedence(t *testing.T) {
+	t.Setenv("REP_MODE", ModeDirect)
+	t.Setenv("NFY_MODE", ModeServer)
+	t.Setenv("REP_SERVER_URL", "https://legacy.example")
+	t.Setenv("NFY_SERVER_URL", "https://nfy.example")
+	t.Setenv("REP_FCM_SERVICE_ACCOUNT", "/legacy.json")
+	t.Setenv("NFY_FCM_SERVICE_ACCOUNT", "/nfy.json")
+
+	mode, err := ResolveMode(DefaultConfig(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode != ModeServer {
+		t.Fatalf("mode = %q, want %q", mode, ModeServer)
+	}
+	if serverURL := ResolveServerURL(DefaultConfig(), ""); serverURL != "https://nfy.example" {
+		t.Fatalf("server URL = %q", serverURL)
+	}
+	if credential := ResolveFcmServiceAccount(DefaultConfig(), ""); credential != "/nfy.json" {
+		t.Fatalf("credential = %q", credential)
+	}
+}
+
 func TestUpsertAndFind(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "rep.yaml")

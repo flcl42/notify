@@ -166,4 +166,4 @@ Write-Host "Back up this signing keystore securely: $KeystorePath"
 if ($GeneratePasswords) {
     Write-Host "DPAPI-encrypted password recovery file: $RecoveryPath"
 }
-Write-Host "Do not upload the Firebase Admin service-account JSON; configure it locally with rep credential."
+Write-Host "Do not upload the Firebase Admin service-account JSON; configure it locally with nfy credential."

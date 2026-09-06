@@ -13,12 +13,15 @@ dist/
 rep/dist/
 rep/rep
 rep/rep.exe
+rep/nfy
+rep/nfy.exe
 build/
 coverage/
 *.log
 .env
 .env.*
 rep.yaml
+nfy.yaml
 .release-secrets/
 *.jks
 *.keystore

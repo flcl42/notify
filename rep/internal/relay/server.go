@@ -2,12 +2,16 @@ package relay
 
 import (
 	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strings"
 	"time"
@@ -21,19 +25,21 @@ type PushSender interface {
 }
 
 type ServerOptions struct {
-	Store     *Store
-	Sender    PushSender
-	PublicURL string
-	Now       func() time.Time
-	Logf      func(format string, args ...interface{})
+	Store             *Store
+	Sender            PushSender
+	PublicURL         string
+	TrustedProxyCIDRs []string
+	Now               func() time.Time
+	Logf              func(format string, args ...interface{})
 }
 
 type Server struct {
-	store     *Store
-	sender    PushSender
-	publicURL string
-	now       func() time.Time
-	logf      func(format string, args ...interface{})
+	store          *Store
+	sender         PushSender
+	publicURL      string
+	trustedProxies []netip.Prefix
+	now            func() time.Time
+	logf           func(format string, args ...interface{})
 }
 
 func NewServer(options ServerOptions) (*Server, error) {
@@ -42,6 +48,10 @@ func NewServer(options ServerOptions) (*Server, error) {
 	}
 	if options.Sender == nil {
 		return nil, fmt.Errorf("FCM sender is required")
+	}
+	trustedProxies, err := parseTrustedProxyCIDRs(options.TrustedProxyCIDRs)
+	if err != nil {
+		return nil, err
 	}
 	now := options.Now
 	if now == nil {
@@ -52,11 +62,12 @@ func NewServer(options ServerOptions) (*Server, error) {
 		logf = func(string, ...interface{}) {}
 	}
 	return &Server{
-		store:     options.Store,
-		sender:    options.Sender,
-		publicURL: strings.TrimRight(strings.TrimSpace(options.PublicURL), "/"),
-		now:       now,
-		logf:      logf,
+		store:          options.Store,
+		sender:         options.Sender,
+		publicURL:      strings.TrimRight(strings.TrimSpace(options.PublicURL), "/"),
+		trustedProxies: trustedProxies,
+		now:            now,
+		logf:           logf,
 	}, nil
 }
 
@@ -299,7 +310,12 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "no FCM push tokens are registered for this subscription")
 		return
 	}
-	limits, err := s.store.Reserve(request.SubscriptionID, verified.Nonce, len(pushTokens), s.now())
+	sourceID, err := s.requestSourceID(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "could not identify sender IP")
+		return
+	}
+	limits, err := s.store.Reserve(request.SubscriptionID, verified.Nonce, sourceID, len(pushTokens), s.now())
 	var rateLimit *RateLimitError
 	switch {
 	case errors.Is(err, ErrReplay):
@@ -326,6 +342,80 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 		DailyRemaining:             limits.DailyRemaining,
 		SubscriptionDailyRemaining: limits.SubscriptionDailyRemaining,
 	})
+}
+
+func parseTrustedProxyCIDRs(values []string) ([]netip.Prefix, error) {
+	var prefixes []netip.Prefix
+	for _, value := range values {
+		for _, item := range strings.Split(value, ",") {
+			item = strings.TrimSpace(item)
+			if item == "" {
+				continue
+			}
+			prefix, err := netip.ParsePrefix(item)
+			if err != nil {
+				return nil, fmt.Errorf("invalid trusted proxy CIDR %q: %w", item, err)
+			}
+			prefixes = append(prefixes, prefix.Masked())
+		}
+	}
+	return prefixes, nil
+}
+
+func (s *Server) requestSourceID(r *http.Request) (string, error) {
+	address, err := parseRemoteAddress(r.RemoteAddr)
+	if err != nil {
+		return "", err
+	}
+
+	if s.isTrustedProxy(address) {
+		forwarded := strings.Split(strings.Join(r.Header.Values("X-Forwarded-For"), ","), ",")
+		for i := len(forwarded) - 1; i >= 0; i-- {
+			candidate, parseErr := netip.ParseAddr(strings.TrimSpace(forwarded[i]))
+			if parseErr != nil {
+				continue
+			}
+			candidate = candidate.Unmap()
+			if !s.isTrustedProxy(candidate) {
+				address = candidate
+				break
+			}
+		}
+	}
+
+	address = canonicalRateLimitAddress(address)
+	digest := sha256.Sum256([]byte(address.String()))
+	return hex.EncodeToString(digest[:16]), nil
+}
+
+func (s *Server) isTrustedProxy(address netip.Addr) bool {
+	address = address.Unmap()
+	for _, prefix := range s.trustedProxies {
+		if prefix.Contains(address) {
+			return true
+		}
+	}
+	return false
+}
+
+func parseRemoteAddress(value string) (netip.Addr, error) {
+	host, _, err := net.SplitHostPort(value)
+	if err == nil {
+		value = host
+	}
+	address, err := netip.ParseAddr(strings.Trim(value, "[]"))
+	if err != nil {
+		return netip.Addr{}, fmt.Errorf("invalid remote address %q: %w", value, err)
+	}
+	return address.Unmap(), nil
+}
+
+func canonicalRateLimitAddress(address netip.Addr) netip.Addr {
+	address = address.Unmap()
+	if address.Is6() {
+		return netip.PrefixFrom(address, 64).Masked().Addr()
+	}
+	return address
 }
 
 func subscriptionIDFromStatusPath(path string) (string, bool) {

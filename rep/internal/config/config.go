@@ -11,7 +11,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const defaultConfigName = "rep.yaml"
+const (
+	defaultConfigName = "nfy.yaml"
+	legacyConfigName  = "rep.yaml"
+)
 
 const (
 	ModeServer        = "server"
@@ -59,6 +62,9 @@ func DefaultConfig() Config {
 }
 
 func GetConfigPath() (string, error) {
+	if env := os.Getenv("NFY_CONFIG"); env != "" {
+		return env, nil
+	}
 	if env := os.Getenv("REP_CONFIG"); env != "" {
 		return env, nil
 	}
@@ -68,21 +74,70 @@ func GetConfigPath() (string, error) {
 		base := strings.ToLower(filepath.Base(exe))
 		ext := filepath.Ext(base)
 		name := strings.TrimSuffix(base, ext)
-		// Release assets are named rep-<os>-<arch>; installed binaries are rep or rep.exe.
-		if name == "rep" || strings.HasPrefix(name, "rep-") {
-			return filepath.Join(filepath.Dir(exe), defaultConfigName), nil
+		// Keep renamed nfy releases and the legacy rep compatibility binary on one config.
+		if name == "nfy" || strings.HasPrefix(name, "nfy-") || name == "rep" || strings.HasPrefix(name, "rep-") {
+			return migrateLegacyConfig(filepath.Join(filepath.Dir(exe), defaultConfigName))
 		}
 	}
 
 	if runtime.GOOS == "windows" {
-		return `C:\Programs\` + defaultConfigName, nil
+		return migrateLegacyConfig(`C:\Programs\` + defaultConfigName)
 	}
 
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("cannot determine config path: %w", err)
 	}
-	return filepath.Join(home, ".config", "private-notify", defaultConfigName), nil
+	return migrateLegacyConfig(filepath.Join(home, ".config", "nfy", defaultConfigName))
+}
+
+func migrateLegacyConfig(targetPath string) (string, error) {
+	if _, err := os.Stat(targetPath); err == nil {
+		return targetPath, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+
+	candidates := []string{filepath.Join(filepath.Dir(targetPath), legacyConfigName)}
+	if home, err := os.UserHomeDir(); err == nil {
+		defaultUserPath := filepath.Join(home, ".config", "nfy", defaultConfigName)
+		if filepath.Clean(targetPath) == filepath.Clean(defaultUserPath) {
+			candidates = append(candidates, filepath.Join(home, ".config", "private-notify", legacyConfigName))
+		}
+	}
+	for _, legacyPath := range candidates {
+		if filepath.Clean(legacyPath) == filepath.Clean(targetPath) {
+			continue
+		}
+		data, err := os.ReadFile(legacyPath)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return "", fmt.Errorf("read legacy config %s: %w", legacyPath, err)
+		}
+		if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+			return "", err
+		}
+		file, err := os.OpenFile(targetPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if errors.Is(err, os.ErrExist) {
+			return targetPath, nil
+		}
+		if err != nil {
+			return "", fmt.Errorf("create migrated config %s: %w", targetPath, err)
+		}
+		if _, err := file.Write(data); err != nil {
+			_ = file.Close()
+			_ = os.Remove(targetPath)
+			return "", fmt.Errorf("migrate config to %s: %w", targetPath, err)
+		}
+		if err := file.Close(); err != nil {
+			_ = os.Remove(targetPath)
+			return "", fmt.Errorf("close migrated config %s: %w", targetPath, err)
+		}
+		return targetPath, nil
+	}
+	return targetPath, nil
 }
 
 func LoadConfig(path string) (Config, error) {
@@ -135,7 +190,7 @@ func Normalize(cfg Config) Config {
 func ResolveMode(cfg Config, explicit string) (string, error) {
 	mode := strings.ToLower(strings.TrimSpace(explicit))
 	if mode == "" {
-		mode = strings.ToLower(strings.TrimSpace(os.Getenv("REP_MODE")))
+		mode = strings.ToLower(strings.TrimSpace(firstEnvironmentValue("NFY_MODE", "REP_MODE")))
 	}
 	if mode == "" {
 		mode = cfg.Mode
@@ -152,7 +207,7 @@ func ResolveMode(cfg Config, explicit string) (string, error) {
 func ResolveServerURL(cfg Config, explicit string) string {
 	serverURL := strings.TrimSpace(explicit)
 	if serverURL == "" {
-		serverURL = strings.TrimSpace(os.Getenv("REP_SERVER_URL"))
+		serverURL = strings.TrimSpace(firstEnvironmentValue("NFY_SERVER_URL", "REP_SERVER_URL"))
 	}
 	if serverURL == "" {
 		serverURL = cfg.ServerURL
@@ -294,7 +349,7 @@ func ResolveFcmServiceAccount(cfg Config, explicitPath string) string {
 	if explicitPath != "" {
 		return explicitPath
 	}
-	if env := os.Getenv("REP_FCM_SERVICE_ACCOUNT"); env != "" {
+	if env := firstEnvironmentValue("NFY_FCM_SERVICE_ACCOUNT", "REP_FCM_SERVICE_ACCOUNT"); env != "" {
 		return env
 	}
 	if cfg.FcmServiceAccount != "" {
@@ -304,4 +359,13 @@ func ResolveFcmServiceAccount(cfg Config, explicitPath string) string {
 		return env
 	}
 	return os.Getenv("FCM_SERVICE_ACCOUNT")
+}
+
+func firstEnvironmentValue(names ...string) string {
+	for _, name := range names {
+		if value := os.Getenv(name); value != "" {
+			return value
+		}
+	}
+	return ""
 }

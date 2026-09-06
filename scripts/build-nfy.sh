@@ -9,12 +9,12 @@ SOURCE_DIR="$REPO_ROOT/rep"
 mkdir -p "$OUTPUT_DIR"
 
 declare -a TARGETS=(
-    "linux:amd64:rep-linux-x64"
-    "linux:arm64:rep-linux-arm64"
-    "windows:amd64:rep-windows-x64.exe"
-    "windows:arm64:rep-windows-arm64.exe"
-    "darwin:amd64:rep-macos-x64"
-    "darwin:arm64:rep-macos-arm64"
+    "linux:amd64:nfy-linux-x64"
+    "linux:arm64:nfy-linux-arm64"
+    "windows:amd64:nfy-windows-x64.exe"
+    "windows:arm64:nfy-windows-arm64.exe"
+    "darwin:amd64:nfy-macos-x64"
+    "darwin:arm64:nfy-macos-arm64"
 )
 
 for target in "${TARGETS[@]}"; do

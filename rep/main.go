@@ -218,7 +218,7 @@ func createSubscription(titleInput string, port int, host string, waitSeconds in
 	case <-timeout:
 		return fmt.Errorf("timed out waiting for mobile push registration")
 	case <-keypressCh:
-		fmt.Println("Stopped. The private key remains in rep.yaml; run create --replace to rotate it.")
+		fmt.Println("Stopped. The private key remains in nfy.yaml; run create --replace to rotate it.")
 	}
 
 	return nil
@@ -301,7 +301,7 @@ func createServerSubscription(cfgPath string, sub config.Subscription, replace b
 		case <-timeout.C:
 			return fmt.Errorf("timed out waiting for mobile push registration")
 		case <-keypressCh:
-			fmt.Println("Stopped. The private key remains in rep.yaml; run create --replace to rotate it.")
+			fmt.Println("Stopped. The private key remains in nfy.yaml; run create --replace to rotate it.")
 			return nil
 		}
 	}
@@ -319,7 +319,7 @@ func resolveTitleAndBody(cfg config.Config, args []string) (*config.Subscription
 
 func sendNotification(args []string, service string, fcmServiceAccount string, fcmProjectID string, modeOverride, serverURLOverride string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: rep <title> <notification text>")
+		return fmt.Errorf("usage: nfy <title> <notification text>")
 	}
 
 	cfgPath, err := loadConfigPath()
@@ -414,7 +414,7 @@ func sendNotification(args []string, service string, fcmServiceAccount string, f
 	}
 
 	if result.Sent == 0 {
-		return fmt.Errorf("no FCM push tokens are registered for \"%s\". Run: rep create \"%s\"", sub.Title, sub.Title)
+		return fmt.Errorf("no FCM push tokens are registered for \"%s\". Run: nfy create \"%s\"", sub.Title, sub.Title)
 	}
 
 	fmt.Printf("Sent \"%s\" notification. Tokens: %d.\n", sub.Title, result.Sent)
@@ -534,9 +534,9 @@ func main() {
 	)
 
 	rootCmd := &cobra.Command{
-		Use:   "rep [args...]",
+		Use:   "nfy [args...]",
 		Short: "Send encrypted Android notifications by title.",
-		Long:  "rep sends encrypted Android notifications by title. Provide the title followed by the notification text.",
+		Long:  "nfy sends encrypted Android notifications by title. Provide the title followed by the notification text.",
 		Args:  cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return sendNotification(args, service, fcmServiceAccount, fcmProjectID, mode, serverURL)
@@ -545,7 +545,7 @@ func main() {
 	rootCmd.Version = version.Version
 	rootCmd.PersistentFlags().StringVar(&fcmServiceAccount, "fcm-service-account", "", "Firebase Admin service-account JSON path for this send")
 	rootCmd.PersistentFlags().StringVar(&fcmProjectID, "fcm-project-id", "", "Firebase project id; defaults to the service account project_id")
-	rootCmd.PersistentFlags().StringVar(&service, "service", "rep", "source service name")
+	rootCmd.PersistentFlags().StringVar(&service, "service", "nfy", "source service name")
 	rootCmd.PersistentFlags().StringVar(&mode, "mode", "", "delivery mode override: server or direct")
 	rootCmd.PersistentFlags().StringVar(&serverURL, "server-url", "", "relay server URL override")
 
@@ -586,7 +586,7 @@ func main() {
 
 	configCmd := &cobra.Command{
 		Use:   "config",
-		Short: "Print rep.yaml path.",
+		Short: "Print nfy.yaml path.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return printConfigPath()
 		},
@@ -594,7 +594,7 @@ func main() {
 
 	credentialCmd := &cobra.Command{
 		Use:   "credential <path>",
-		Short: "Store the Firebase Admin service-account JSON path in rep.yaml.",
+		Short: "Store the Firebase Admin service-account JSON path in nfy.yaml.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return saveCredential(args[0])

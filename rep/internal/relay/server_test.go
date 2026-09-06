@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -49,8 +50,12 @@ func testEnvelope(subscriptionID string) fcm.Envelope {
 }
 
 func newTestRelay(t *testing.T, statePath string, now time.Time, dailyLimit, perSubscriptionLimit int, sender *recordingSender) (*httptest.Server, *Store) {
+	return newTestRelayWithIPLimit(t, statePath, now, dailyLimit, perSubscriptionLimit, 10, sender)
+}
+
+func newTestRelayWithIPLimit(t *testing.T, statePath string, now time.Time, dailyLimit, perSubscriptionLimit, perIPSubscriptionLimit int, sender *recordingSender) (*httptest.Server, *Store) {
 	t.Helper()
-	store, err := OpenStore(statePath, dailyLimit, perSubscriptionLimit)
+	store, err := OpenStore(statePath, dailyLimit, perSubscriptionLimit, perIPSubscriptionLimit)
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
@@ -59,6 +64,116 @@ func newTestRelay(t *testing.T, statePath string, now time.Time, dailyLimit, per
 		t.Fatalf("new server: %v", err)
 	}
 	return httptest.NewServer(server.Handler()), store
+}
+
+func TestRelayLimitsDistinctSubscriptionsPerSourceIP(t *testing.T) {
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	statePath := filepath.Join(t.TempDir(), "state.json")
+	sender := &recordingSender{}
+	server, _ := newTestRelayWithIPLimit(t, statePath, now, 100, 100, 2, sender)
+	client := newTestClient(t, server.URL, now)
+	unusedID := uuid.Must(uuid.NewRandom()).String()
+	unusedKey := testKey(9)
+	if _, err := client.Provision(context.Background(), unusedID, unusedKey); err != nil {
+		t.Fatalf("provision unused subscription: %v", err)
+	}
+	_, err := client.Send(context.Background(), unusedID, unusedKey, "test", testEnvelope(unusedID), nil)
+	var noTokenError *HTTPError
+	if !errorsAs(err, &noTokenError) || noTokenError.StatusCode != http.StatusConflict {
+		t.Fatalf("expected no-token HTTP 409, got %v", err)
+	}
+
+	type testSubscription struct {
+		id  string
+		key string
+	}
+	subscriptions := make([]testSubscription, 3)
+	for i := range subscriptions {
+		subscriptions[i] = testSubscription{
+			id:  uuid.Must(uuid.NewRandom()).String(),
+			key: testKey(byte(i + 1)),
+		}
+		provisionAndRegister(t, client, subscriptions[i].id, subscriptions[i].key, fmt.Sprintf("phone-%d", i))
+	}
+
+	for i := 0; i < 2; i++ {
+		if _, err := client.Send(context.Background(), subscriptions[i].id, subscriptions[i].key, "test", testEnvelope(subscriptions[i].id), nil); err != nil {
+			t.Fatalf("send for subscription %d: %v", i, err)
+		}
+	}
+	if _, err := client.Send(context.Background(), subscriptions[0].id, subscriptions[0].key, "test", testEnvelope(subscriptions[0].id), nil); err != nil {
+		t.Fatalf("repeat send for an already-counted subscription: %v", err)
+	}
+
+	_, err = client.Send(context.Background(), subscriptions[2].id, subscriptions[2].key, "test", testEnvelope(subscriptions[2].id), nil)
+	var httpError *HTTPError
+	if !errorsAs(err, &httpError) || httpError.StatusCode != http.StatusTooManyRequests || !strings.Contains(httpError.Message, "source IP") {
+		t.Fatalf("expected source-IP HTTP 429, got %v", err)
+	}
+	server.Close()
+
+	restarted, _ := newTestRelayWithIPLimit(t, statePath, now, 100, 100, 2, sender)
+	restartedClient := newTestClient(t, restarted.URL, now)
+	_, err = restartedClient.Send(context.Background(), subscriptions[2].id, subscriptions[2].key, "test", testEnvelope(subscriptions[2].id), nil)
+	if !errorsAs(err, &httpError) || httpError.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("expected persisted source-IP limit after restart, got %v", err)
+	}
+	restarted.Close()
+
+	nextDay := now.Add(24 * time.Hour)
+	nextDayServer, _ := newTestRelayWithIPLimit(t, statePath, nextDay, 100, 100, 2, sender)
+	defer nextDayServer.Close()
+	nextDayClient := newTestClient(t, nextDayServer.URL, nextDay)
+	if _, err := nextDayClient.Send(context.Background(), subscriptions[2].id, subscriptions[2].key, "test", testEnvelope(subscriptions[2].id), nil); err != nil {
+		t.Fatalf("send after source-IP UTC-day reset: %v", err)
+	}
+}
+
+func TestRequestSourceIDUsesOnlyTrustedForwardingHeaders(t *testing.T) {
+	trusted, err := parseTrustedProxyCIDRs([]string{"172.17.0.0/16"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{trustedProxies: trusted}
+
+	proxied := httptest.NewRequest(http.MethodPost, "http://relay.test/v1/send", nil)
+	proxied.RemoteAddr = "172.17.0.2:12345"
+	proxied.Header.Set("X-Forwarded-For", "192.0.2.10, 198.51.100.20")
+	proxiedID, err := server.requestSourceID(proxied)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rightmostForwarded := httptest.NewRequest(http.MethodPost, "http://relay.test/v1/send", nil)
+	rightmostForwarded.RemoteAddr = "198.51.100.20:443"
+	rightmostID, err := server.requestSourceID(rightmostForwarded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if proxiedID != rightmostID {
+		t.Fatal("trusted proxy did not select the rightmost untrusted forwarded address")
+	}
+
+	direct := httptest.NewRequest(http.MethodPost, "http://relay.test/v1/send", nil)
+	direct.RemoteAddr = "203.0.113.30:443"
+	direct.Header.Set("X-Forwarded-For", "198.51.100.20")
+	directID, err := server.requestSourceID(direct)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if directID == rightmostID {
+		t.Fatal("untrusted peer was able to spoof X-Forwarded-For")
+	}
+
+	v6a := httptest.NewRequest(http.MethodPost, "http://relay.test/v1/send", nil)
+	v6a.RemoteAddr = "[2001:db8:1234:5678::1]:443"
+	v6b := httptest.NewRequest(http.MethodPost, "http://relay.test/v1/send", nil)
+	v6b.RemoteAddr = "[2001:db8:1234:5678::ffff]:443"
+	v6aID, _ := server.requestSourceID(v6a)
+	v6bID, _ := server.requestSourceID(v6b)
+	if v6aID != v6bID {
+		t.Fatal("IPv6 addresses in one /64 did not share a quota identity")
+	}
 }
 
 func newTestClient(t *testing.T, serverURL string, now time.Time) *Client {
@@ -254,7 +369,7 @@ func TestRelayRejectsReplayWrongKeyAndKeyConflict(t *testing.T) {
 
 func TestBrowserPairingURLKeepsCredentialOutOfHTTPRequest(t *testing.T) {
 	now := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
-	store, err := OpenStore(filepath.Join(t.TempDir(), "state.json"), 10, 10)
+	store, err := OpenStore(filepath.Join(t.TempDir(), "state.json"), 10, 10, 10)
 	if err != nil {
 		t.Fatal(err)
 	}

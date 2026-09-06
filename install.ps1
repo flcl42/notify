@@ -73,13 +73,13 @@ $processorArchitecture = if ($env:PROCESSOR_ARCHITEW6432) {
 }
 
 $cliAsset = switch ($processorArchitecture.ToUpperInvariant()) {
-    'AMD64' { 'rep-windows-x64.exe' }
-    'ARM64' { 'rep-windows-arm64.exe' }
+    'AMD64' { 'nfy-windows-x64.exe' }
+    'ARM64' { 'nfy-windows-arm64.exe' }
     default { throw "Unsupported Windows architecture: $processorArchitecture" }
 }
 
 $apkAsset = 'private-notify-android.apk'
-$temporaryDirectory = Join-Path ([IO.Path]::GetTempPath()) ("private-notify-" + [guid]::NewGuid())
+$temporaryDirectory = Join-Path ([IO.Path]::GetTempPath()) ("nfy-" + [guid]::NewGuid())
 $temporaryCli = Join-Path $temporaryDirectory $cliAsset
 $temporaryApk = Join-Path $temporaryDirectory $apkAsset
 $temporaryChecksums = Join-Path $temporaryDirectory 'SHA256SUMS.txt'
@@ -93,6 +93,13 @@ try {
     Assert-ReleaseAssetHash -Path $temporaryApk -AssetName $apkAsset -ChecksumPath $temporaryChecksums
 
     New-Item -ItemType Directory -Force $InstallDirectory | Out-Null
+    $nfyConfig = Join-Path $InstallDirectory 'nfy.yaml'
+    $legacyConfig = Join-Path $InstallDirectory 'rep.yaml'
+    if (-not (Test-Path -LiteralPath $nfyConfig) -and (Test-Path -LiteralPath $legacyConfig)) {
+        Copy-Item -LiteralPath $legacyConfig -Destination $nfyConfig
+    }
+    Copy-Item -Force $temporaryCli (Join-Path $InstallDirectory 'nfy.exe')
+    # Keep existing automation working while nfy becomes the documented command.
     Copy-Item -Force $temporaryCli (Join-Path $InstallDirectory 'rep.exe')
     Copy-Item -Force $temporaryApk (Join-Path $InstallDirectory $apkAsset)
 } finally {
@@ -108,14 +115,14 @@ if (-not (($env:Path -split ';') | Where-Object { $_.TrimEnd('\') -ieq $InstallD
     $env:Path += ";$InstallDirectory"
 }
 
-$installedCli = Join-Path $InstallDirectory 'rep.exe'
+$installedCli = Join-Path $InstallDirectory 'nfy.exe'
 $installedApk = Join-Path $InstallDirectory $apkAsset
 
 if ($CredentialPath) {
     $resolvedCredential = (Resolve-Path $CredentialPath).Path
     & $installedCli credential $resolvedCredential
     if ($LASTEXITCODE -ne 0) {
-        throw "rep.exe could not store the Firebase Admin credential path."
+        throw "nfy.exe could not store the Firebase Admin credential path."
     }
 }
 
@@ -142,6 +149,6 @@ Write-Host "Installed CLI: $installedCli"
 Write-Host "Android APK:  $installedApk"
 if (-not $CredentialPath) {
     Write-Host 'Default delivery uses the hosted relay; no local Firebase Admin key is required.'
-    Write-Host 'Next: rep create "Build Alerts"'
-    Write-Host 'For direct mode: rep mode direct; rep credential "C:\path\to\firebase-admin-service-account.json"'
+    Write-Host 'Next: nfy create "Build Alerts"'
+    Write-Host 'For direct mode: nfy mode direct; nfy credential "C:\path\to\firebase-admin-service-account.json"'
 }

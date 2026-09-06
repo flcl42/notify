@@ -272,7 +272,7 @@ func (s *Sender) SendPushNotifications(pushTokens []PushToken, envelope Envelope
 		return SendResult{}, err
 	}
 	if service == "" {
-		service = "rep"
+		service = "nfy"
 	}
 
 	result := SendResult{

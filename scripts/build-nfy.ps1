@@ -13,12 +13,12 @@ $source = Join-Path $repoRoot "rep"
 New-Item -ItemType Directory -Force $OutputDirectory | Out-Null
 
 $targets = @(
-    @{ GOOS = "linux"; GOARCH = "amd64"; Asset = "rep-linux-x64" },
-    @{ GOOS = "linux"; GOARCH = "arm64"; Asset = "rep-linux-arm64" },
-    @{ GOOS = "windows"; GOARCH = "amd64"; Asset = "rep-windows-x64.exe" },
-    @{ GOOS = "windows"; GOARCH = "arm64"; Asset = "rep-windows-arm64.exe" },
-    @{ GOOS = "darwin"; GOARCH = "amd64"; Asset = "rep-macos-x64" },
-    @{ GOOS = "darwin"; GOARCH = "arm64"; Asset = "rep-macos-arm64" }
+    @{ GOOS = "linux"; GOARCH = "amd64"; Asset = "nfy-linux-x64" },
+    @{ GOOS = "linux"; GOARCH = "arm64"; Asset = "nfy-linux-arm64" },
+    @{ GOOS = "windows"; GOARCH = "amd64"; Asset = "nfy-windows-x64.exe" },
+    @{ GOOS = "windows"; GOARCH = "arm64"; Asset = "nfy-windows-arm64.exe" },
+    @{ GOOS = "darwin"; GOARCH = "amd64"; Asset = "nfy-macos-x64" },
+    @{ GOOS = "darwin"; GOARCH = "arm64"; Asset = "nfy-macos-arm64" }
 )
 
 try {

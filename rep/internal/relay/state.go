@@ -30,6 +30,9 @@ type RateLimitError struct {
 }
 
 func (e *RateLimitError) Error() string {
+	if e.Scope == "source IP notification keys" {
+		return "source IP daily notification-key limit exceeded"
+	}
 	return e.Scope + " daily notification limit exceeded"
 }
 
@@ -48,9 +51,10 @@ type storedSubscription struct {
 }
 
 type dailyCounters struct {
-	Day             string         `json:"day"`
-	Total           int            `json:"total"`
-	PerSubscription map[string]int `json:"perSubscription"`
+	Day                string                     `json:"day"`
+	Total              int                        `json:"total"`
+	PerSubscription    map[string]int             `json:"perSubscription"`
+	PerIPSubscriptions map[string]map[string]bool `json:"perIpSubscriptions"`
 }
 
 type persistentState struct {
@@ -61,11 +65,12 @@ type persistentState struct {
 }
 
 type Store struct {
-	mu                     sync.Mutex
-	path                   string
-	dailyLimit             int
-	subscriptionDailyLimit int
-	state                  persistentState
+	mu                       sync.Mutex
+	path                     string
+	dailyLimit               int
+	subscriptionDailyLimit   int
+	ipSubscriptionDailyLimit int
+	state                    persistentState
 }
 
 type LimitResult struct {
@@ -73,22 +78,24 @@ type LimitResult struct {
 	SubscriptionDailyRemaining int
 }
 
-func OpenStore(path string, dailyLimit, subscriptionDailyLimit int) (*Store, error) {
+func OpenStore(path string, dailyLimit, subscriptionDailyLimit, ipSubscriptionDailyLimit int) (*Store, error) {
 	if strings.TrimSpace(path) == "" {
 		return nil, fmt.Errorf("relay state path is required")
 	}
-	if dailyLimit <= 0 || subscriptionDailyLimit <= 0 {
+	if dailyLimit <= 0 || subscriptionDailyLimit <= 0 || ipSubscriptionDailyLimit <= 0 {
 		return nil, fmt.Errorf("daily limits must be positive")
 	}
 	store := &Store{
-		path:                   path,
-		dailyLimit:             dailyLimit,
-		subscriptionDailyLimit: subscriptionDailyLimit,
+		path:                     path,
+		dailyLimit:               dailyLimit,
+		subscriptionDailyLimit:   subscriptionDailyLimit,
+		ipSubscriptionDailyLimit: ipSubscriptionDailyLimit,
 		state: persistentState{
 			V:             1,
 			Subscriptions: map[string]*storedSubscription{},
 			Counters: dailyCounters{
-				PerSubscription: map[string]int{},
+				PerSubscription:    map[string]int{},
+				PerIPSubscriptions: map[string]map[string]bool{},
 			},
 			UsedNonces: map[string]int64{},
 		},
@@ -120,6 +127,9 @@ func (s *Store) normalizeLocked() {
 	}
 	if s.state.Counters.PerSubscription == nil {
 		s.state.Counters.PerSubscription = map[string]int{}
+	}
+	if s.state.Counters.PerIPSubscriptions == nil {
+		s.state.Counters.PerIPSubscriptions = map[string]map[string]bool{}
 	}
 	if s.state.UsedNonces == nil {
 		s.state.UsedNonces = map[string]int64{}
@@ -254,11 +264,14 @@ func (s *Store) MergePushTokens(subscriptionID string, supplied []fcm.PushToken)
 	return result, nil
 }
 
-func (s *Store) Reserve(subscriptionID, nonce string, deliveries int, now time.Time) (LimitResult, error) {
+func (s *Store) Reserve(subscriptionID, nonce, sourceID string, deliveries int, now time.Time) (LimitResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.state.Subscriptions[subscriptionID] == nil {
 		return LimitResult{}, ErrUnknownSubscription
+	}
+	if strings.TrimSpace(sourceID) == "" {
+		return LimitResult{}, fmt.Errorf("source id is required")
 	}
 	if deliveries <= 0 {
 		return LimitResult{}, fmt.Errorf("delivery count must be positive")
@@ -268,7 +281,11 @@ func (s *Store) Reserve(subscriptionID, nonce string, deliveries int, now time.T
 	previousNonces := cloneNonces(s.state.UsedNonces)
 	day := now.UTC().Format("2006-01-02")
 	if s.state.Counters.Day != day {
-		s.state.Counters = dailyCounters{Day: day, PerSubscription: map[string]int{}}
+		s.state.Counters = dailyCounters{
+			Day:                day,
+			PerSubscription:    map[string]int{},
+			PerIPSubscriptions: map[string]map[string]bool{},
+		}
 	}
 	cutoff := now.UTC().Add(-10 * time.Minute).Unix()
 	for key, usedAt := range s.state.UsedNonces {
@@ -286,10 +303,19 @@ func (s *Store) Reserve(subscriptionID, nonce string, deliveries int, now time.T
 	if s.state.Counters.PerSubscription[subscriptionID]+deliveries > s.subscriptionDailyLimit {
 		return LimitResult{}, &RateLimitError{Scope: "subscription"}
 	}
+	sourceSubscriptions := s.state.Counters.PerIPSubscriptions[sourceID]
+	if sourceSubscriptions == nil {
+		sourceSubscriptions = map[string]bool{}
+	}
+	if !sourceSubscriptions[subscriptionID] && len(sourceSubscriptions) >= s.ipSubscriptionDailyLimit {
+		return LimitResult{}, &RateLimitError{Scope: "source IP notification keys"}
+	}
 
 	s.state.UsedNonces[replayKey] = now.UTC().Unix()
 	s.state.Counters.Total += deliveries
 	s.state.Counters.PerSubscription[subscriptionID] += deliveries
+	sourceSubscriptions[subscriptionID] = true
+	s.state.Counters.PerIPSubscriptions[sourceID] = sourceSubscriptions
 	result := LimitResult{
 		DailyRemaining:             s.dailyLimit - s.state.Counters.Total,
 		SubscriptionDailyRemaining: s.subscriptionDailyLimit - s.state.Counters.PerSubscription[subscriptionID],
@@ -303,9 +329,20 @@ func (s *Store) Reserve(subscriptionID, nonce string, deliveries int, now time.T
 }
 
 func cloneCounters(value dailyCounters) dailyCounters {
-	copyValue := dailyCounters{Day: value.Day, Total: value.Total, PerSubscription: map[string]int{}}
+	copyValue := dailyCounters{
+		Day:                value.Day,
+		Total:              value.Total,
+		PerSubscription:    map[string]int{},
+		PerIPSubscriptions: map[string]map[string]bool{},
+	}
 	for key, count := range value.PerSubscription {
 		copyValue.PerSubscription[key] = count
+	}
+	for sourceID, subscriptions := range value.PerIPSubscriptions {
+		copyValue.PerIPSubscriptions[sourceID] = map[string]bool{}
+		for subscriptionID, used := range subscriptions {
+			copyValue.PerIPSubscriptions[sourceID][subscriptionID] = used
+		}
 	}
 	return copyValue
 }

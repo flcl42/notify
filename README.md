@@ -3,10 +3,10 @@
 Private Notify delivers rare, timely Android notifications without keeping a
 socket open. A native Android app receives high-priority FCM data messages,
 decrypts them locally with ChaCha20-Poly1305, stores them, and displays normal
-Android notifications. The standalone `rep` CLI, written in Go, creates QR subscriptions and
+Android notifications. The standalone `nfy` CLI, written in Go, creates QR subscriptions and
 sends encrypted messages by title.
 
-`rep` has two delivery modes. The default `server` mode sends the already
+`nfy` has two delivery modes. The default `server` mode sends the already
 encrypted envelope through the hosted relay at `https://notify.apps.flcl.me`, so
 the sender needs no Google credential. `direct` mode keeps the original fully
 local sender and uses a Firebase Admin service-account file on the CLI machine.
@@ -14,9 +14,10 @@ local sender and uses a Firebase Admin service-account file on the CLI machine.
 ## Install
 
 GitHub releases contain standalone CLI executables and a signed Android APK.
-The Windows installer verifies release checksums, installs `rep.exe` and the APK
+The Windows installer verifies release checksums, installs `nfy.exe` and the APK
 under `C:\Programs`, adds that directory to the user `PATH`, and uses ADB to
-install the app when an authorized Android device is connected.
+install the app when an authorized Android device is connected. It also updates
+`rep.exe` as a compatibility alias for existing automation.
 
 Windows, PowerShell:
 
@@ -34,13 +35,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File $i -CredentialPath "D:\path\
 Linux, bash, CLI only:
 
 ```bash
-repo=flcl42/notify; dir="$HOME/.local/bin"; arch="$(uname -m)"; asset=rep-linux-x64; case "$arch" in aarch64|arm64) asset=rep-linux-arm64;; esac; mkdir -p "$dir"; curl -fsSL "https://github.com/$repo/releases/latest/download/$asset" -o "$dir/rep"; chmod +x "$dir/rep"; grep -qxF 'export PATH="$HOME/.local/bin:$PATH"' "$HOME/.bashrc" || echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
+repo=flcl42/notify; dir="$HOME/.local/bin"; arch="$(uname -m)"; asset=nfy-linux-x64; case "$arch" in aarch64|arm64) asset=nfy-linux-arm64;; esac; mkdir -p "$dir"; curl -fsSL "https://github.com/$repo/releases/latest/download/$asset" -o "$dir/nfy"; chmod +x "$dir/nfy"; ln -sf nfy "$dir/rep"; grep -qxF 'export PATH="$HOME/.local/bin:$PATH"' "$HOME/.bashrc" || echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
 ```
 
 macOS, zsh, CLI only:
 
 ```zsh
-repo=flcl42/notify; dir="$HOME/.local/bin"; arch="$(uname -m)"; asset=rep-macos-arm64; [ "$arch" = "x86_64" ] && asset=rep-macos-x64; mkdir -p "$dir"; curl -fsSL "https://github.com/$repo/releases/latest/download/$asset" -o "$dir/rep"; chmod +x "$dir/rep"; grep -qxF 'export PATH="$HOME/.local/bin:$PATH"' "$HOME/.zshrc" || echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.zshrc"
+repo=flcl42/notify; dir="$HOME/.local/bin"; arch="$(uname -m)"; asset=nfy-macos-arm64; [ "$arch" = "x86_64" ] && asset=nfy-macos-x64; mkdir -p "$dir"; curl -fsSL "https://github.com/$repo/releases/latest/download/$asset" -o "$dir/nfy"; chmod +x "$dir/nfy"; ln -sf nfy "$dir/rep"; grep -qxF 'export PATH="$HOME/.local/bin:$PATH"' "$HOME/.zshrc" || echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.zshrc"
 ```
 
 Android APK only:
@@ -59,7 +60,7 @@ Create a private key for a notification title and scan the QR with the Android
 app or a general QR scanner:
 
 ```powershell
-rep create "Build Alerts"
+nfy create "Build Alerts"
 ```
 
 In default server mode the QR is a normal
@@ -69,39 +70,46 @@ App Link. The HTTPS page also offers an app-opening fallback for browsers that
 do not hand off the link automatically. The private payload stays in the URL
 fragment, which is not sent in the HTTP request, and is removed from browser
 history by the fallback page. Android registers silently after the app opens.
-Press any key in `rep create` to stop waiting; the generated key remains in
-`rep.yaml`. Use `--replace` to rotate it.
+Press any key in `nfy create` to stop waiting; the generated key remains in
+`nfy.yaml`. Use `--replace` to rotate it.
 
 Send later without maintaining a phone connection:
 
 ```powershell
-rep "Build Alerts" "The build finished."
-rep list
+nfy "Build Alerts" "The build finished."
+nfy list
 ```
 
-Packaged builds store `rep.yaml` next to the executable. It contains private
-notification keys, any direct-mode push tokens, delivery-mode settings, and an
-optional path to the Firebase Admin JSON. Back it up as sensitive data.
+Packaged builds store `nfy.yaml` next to the executable. On first use, `nfy`
+copies an adjacent legacy `rep.yaml` when `nfy.yaml` does not exist. The file
+contains private notification keys, any direct-mode push tokens, delivery-mode
+settings, and an optional path to the Firebase Admin JSON. Back it up as sensitive data. The
+environment overrides are `NFY_CONFIG`, `NFY_MODE`, `NFY_SERVER_URL`, and
+`NFY_FCM_SERVICE_ACCOUNT`; their legacy `REP_*` names remain supported.
 
 ## Delivery Modes
 
 Show or change the persisted mode:
 
 ```powershell
-rep mode
-rep mode server
-rep mode direct
+nfy mode
+nfy mode server
+nfy mode direct
 ```
 
 Server mode is the default for new and existing configurations. It pairs the
 phone directly with the relay, then signs every relay request with an Ed25519
 identity derived from the QR key. The relay stores the signing public key and
 FCM routing token, but never the QR key or notification plaintext. The hosted
-relay allows at most 100,000 device deliveries in total per UTC day and 1,000
-per QR subscription per UTC day.
+relay allows at most 100,000 device deliveries in total per UTC day, 1,000 per
+QR subscription per UTC day, and 10 distinct QR subscriptions sending from one
+source IP per UTC day. The IP-key counter is charged only by requests with FCM
+targets; provisioning unused QR keys does not consume it. IPv6 clients are
+grouped by `/64`, and stored IP identities are truncated SHA-256 hashes rather
+than raw addresses.
 
 The hosted CLI endpoint, scanner launch page, and phone registration callback
-all use HTTPS. `rep` connects directly to the built-in hosted relay instead of
+all use HTTPS. `nfy` connects directly to the built-in hosted relay instead of
 routing it through `HTTP_PROXY` or `HTTPS_PROXY`; custom relay URLs retain normal
 environment-proxy behavior. Notification title and body contents remain
 end-to-end encrypted through either mode.
@@ -109,17 +117,17 @@ end-to-end encrypted through either mode.
 Override the relay temporarily or persist another relay:
 
 ```powershell
-rep --server-url http://relay.example:17891 "Build Alerts" "Done"
-rep mode server http://relay.example:17891
+nfy --server-url http://relay.example:17891 "Build Alerts" "Done"
+nfy mode server http://relay.example:17891
 ```
 
 Direct mode sends to FCM from the CLI machine. It requires the Firebase Admin
 credential and local/LAN or ADB access during pairing:
 
 ```powershell
-rep mode direct
-rep credential "D:\secure\firebase-admin-service-account.json"
-rep create "Build Alerts" --replace
+nfy mode direct
+nfy credential "D:\secure\firebase-admin-service-account.json"
+nfy create "Build Alerts" --replace
 ```
 
 `--mode server` and `--mode direct` override the stored mode for one command.
@@ -134,7 +142,7 @@ project:
 | File | Used by | Secret | Destination |
 | --- | --- | --- | --- |
 | `google-services.json` | Android APK | No; Firebase embeds these client identifiers in the APK | `android/app/google-services.json` |
-| Firebase Admin service-account JSON | Relay or direct-mode `rep` sender | Yes; it contains a private key | Keep outside the repository; pass its path to the server or `rep credential` |
+| Firebase Admin service-account JSON | Relay or direct-mode `nfy` sender | Yes; it contains a private key | Keep outside the repository; pass its path to the server or `nfy credential` |
 
 The Android client and Admin key must have the same Firebase `project_id`.
 
@@ -194,11 +202,11 @@ and [server requirements](https://firebase.google.com/docs/cloud-messaging/serve
 5. For direct mode, configure its path on every sender machine:
 
    ```powershell
-   rep credential "D:\secure\firebase-admin-service-account.json"
+   nfy credential "D:\secure\firebase-admin-service-account.json"
    ```
 
 The Admin JSON authorizes sends to FCM and contains a private key. A relay reads
-it only on the server. Never commit it, put it in `rep.exe`, attach it to a
+it only on the server. Never commit it, put it in `nfy.exe`, attach it to a
 release, or encode it into a QR. If it is exposed, revoke that service-account
 key in Google Cloud IAM and generate a replacement.
 
@@ -214,7 +222,7 @@ $admin.project_id
 ```
 
 The two printed project IDs must be identical. A mismatch lets the Android app
-register with one Firebase project while `rep` tries to send through another.
+register with one Firebase project while `nfy` tries to send through another.
 
 ### 6. Configure GitHub release secrets
 
@@ -245,12 +253,12 @@ Build the CLI binaries for all platforms:
 
 ```powershell
 # Windows
-.\scripts\build-rep.ps1 -Version 0.3.2
+.\scripts\build-nfy.ps1 -Version 0.4.0
 ```
 
 ```bash
 # Linux / macOS / WSL
-./scripts/build-rep.sh 0.3.2
+./scripts/build-nfy.sh 0.4.0
 ```
 
 Run the Go tests:
@@ -279,11 +287,15 @@ CGO_ENABLED=0 go build -o notify-server ./cmd/notify-server
   --listen :17891 \
   --public-url http://your-server:17891 \
   --state /var/lib/private-notify/state.json \
-  --fcm-service-account /secure/firebase-admin-service-account.json
+  --fcm-service-account /secure/firebase-admin-service-account.json \
+  --ip-subscription-daily-limit 10 \
+  --trusted-proxies 127.0.0.0/8,::1/128
 ```
 
-The defaults enforce 100,000 total and 1,000 per-subscription FCM deliveries
-per UTC day. Relay state persists both counters across restarts. See
+The defaults enforce 100,000 total and 1,000 per-subscription FCM deliveries,
+plus 10 distinct sending subscriptions per source IP, per UTC day. Relay state
+persists all counters across restarts. Configure `--trusted-proxies` with only
+the CIDRs of reverse proxies that are allowed to supply `X-Forwarded-For`. See
 [`deploy/private-notify.service`](deploy/private-notify.service) for a systemd
 unit with automatic restart.
 
@@ -291,7 +303,7 @@ unit with automatic restart.
 
 Pairing creates a random 256-bit key and encodes it with the default title and a
 registration URL in the QR. The Android app obtains an FCM token and returns it
-to either the relay or the direct-mode CLI. For each send, `rep` encrypts the
+to either the relay or the direct-mode CLI. For each send, `nfy` encrypts the
 title, body, and metadata locally with ChaCha20-Poly1305. In server mode it signs
 the encrypted request; the relay checks the signature and quotas, then submits
 the opaque envelope to FCM. Android decrypts the envelope before storing or
@@ -302,15 +314,15 @@ services manage push wakeups, which is substantially cheaper at idle than a
 persistent application socket. Force-stop, missing notification permission, and
 aggressive OEM battery restrictions can still delay or block delivery.
 
-The QR and `rep.yaml` are private. Anyone who obtains a pairing key can decrypt
+The QR and `nfy.yaml` are private. Anyone who obtains a pairing key can decrypt
 future messages for that subscription until the title is rotated.
 
 ## Release
 
 Branch and pull-request workflows test the CLI and Android build. Tags such as
-`release/0.3.2` build six standalone CLI assets, two static Linux relay assets,
-and a signed APK, verify the APK signature, generate SHA-256 checksums, and
-publish a GitHub release. Android
+`release/0.4.0` build six standalone `nfy` CLI assets, two static Linux relay
+assets, and a signed APK, verify the APK signature, generate SHA-256 checksums,
+and publish a GitHub release. Android
 signing and Firebase client configuration use repository secrets; GitHub's
 built-in token publishes the release.
 

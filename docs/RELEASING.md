@@ -70,12 +70,12 @@ git push origin master --tags
 GitHub automatically provides `GITHUB_TOKEN`; no personal access token is
 required by the workflow. A successful tagged run publishes:
 
-- `rep-linux-x64`
-- `rep-linux-arm64`
-- `rep-windows-x64.exe`
-- `rep-windows-arm64.exe`
-- `rep-macos-x64`
-- `rep-macos-arm64`
+- `nfy-linux-x64`
+- `nfy-linux-arm64`
+- `nfy-windows-x64.exe`
+- `nfy-windows-arm64.exe`
+- `nfy-macos-x64`
+- `nfy-macos-arm64`
 - `notify-server-linux-x64`
 - `notify-server-linux-arm64`
 - `private-notify-android.apk`

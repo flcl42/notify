@@ -30,6 +30,8 @@ func main() {
 	projectID := flag.String("fcm-project-id", "", "Firebase project id; defaults to service account project_id")
 	dailyLimit := flag.Int("daily-limit", 100000, "maximum FCM deliveries across all subscriptions per UTC day")
 	subscriptionDailyLimit := flag.Int("subscription-daily-limit", 1000, "maximum FCM deliveries per subscription per UTC day")
+	ipSubscriptionDailyLimit := flag.Int("ip-subscription-daily-limit", 10, "maximum distinct subscriptions sending from one source IP per UTC day")
+	trustedProxies := flag.String("trusted-proxies", "127.0.0.0/8,::1/128", "comma-separated proxy CIDRs trusted to supply X-Forwarded-For")
 	showVersion := flag.Bool("version", false, "print version")
 	flag.Parse()
 
@@ -38,7 +40,7 @@ func main() {
 		return
 	}
 
-	store, err := relay.OpenStore(*statePath, *dailyLimit, *subscriptionDailyLimit)
+	store, err := relay.OpenStore(*statePath, *dailyLimit, *subscriptionDailyLimit, *ipSubscriptionDailyLimit)
 	if err != nil {
 		log.Fatalf("open relay state: %v", err)
 	}
@@ -50,10 +52,11 @@ func main() {
 		log.Fatalf("initialize FCM sender: %v", err)
 	}
 	relayServer, err := relay.NewServer(relay.ServerOptions{
-		Store:     store,
-		Sender:    sender,
-		PublicURL: *publicURL,
-		Logf:      log.Printf,
+		Store:             store,
+		Sender:            sender,
+		PublicURL:         *publicURL,
+		TrustedProxyCIDRs: []string{*trustedProxies},
+		Logf:              log.Printf,
 	})
 	if err != nil {
 		log.Fatalf("initialize relay: %v", err)
@@ -80,7 +83,7 @@ func main() {
 		}
 	}()
 
-	log.Printf("private-notify relay %s listening on %s (public %s, UTC limits %d total/%d per subscription)", version.Version, *listen, *publicURL, *dailyLimit, *subscriptionDailyLimit)
+	log.Printf("private-notify relay %s listening on %s (public %s, UTC limits %d total/%d per subscription/%d distinct subscriptions per IP)", version.Version, *listen, *publicURL, *dailyLimit, *subscriptionDailyLimit, *ipSubscriptionDailyLimit)
 	if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("serve relay: %v", err)
 	}
