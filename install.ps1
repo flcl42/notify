@@ -99,8 +99,10 @@ try {
         Copy-Item -LiteralPath $legacyConfig -Destination $nfyConfig
     }
     Copy-Item -Force $temporaryCli (Join-Path $InstallDirectory 'nfy.exe')
-    # Keep existing automation working while nfy becomes the documented command.
-    Copy-Item -Force $temporaryCli (Join-Path $InstallDirectory 'rep.exe')
+    $legacyCli = Join-Path $InstallDirectory 'rep.exe'
+    if (Test-Path -LiteralPath $legacyCli) {
+        Remove-Item -LiteralPath $legacyCli -Force
+    }
     Copy-Item -Force $temporaryApk (Join-Path $InstallDirectory $apkAsset)
 } finally {
     Remove-Item -LiteralPath $temporaryDirectory -Recurse -Force -ErrorAction SilentlyContinue

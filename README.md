@@ -16,8 +16,8 @@ local sender and uses a Firebase Admin service-account file on the CLI machine.
 GitHub releases contain standalone CLI executables and a signed Android APK.
 The Windows installer verifies release checksums, installs `nfy.exe` and the APK
 under `C:\Programs`, adds that directory to the user `PATH`, and uses ADB to
-install the app when an authorized Android device is connected. It also updates
-`rep.exe` as a compatibility alias for existing automation.
+install the app when an authorized Android device is connected. It removes the
+retired `rep.exe` command after migrating its configuration.
 
 Windows, PowerShell:
 
@@ -35,13 +35,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File $i -CredentialPath "D:\path\
 Linux, bash, CLI only:
 
 ```bash
-repo=flcl42/notify; dir="$HOME/.local/bin"; arch="$(uname -m)"; asset=nfy-linux-x64; case "$arch" in aarch64|arm64) asset=nfy-linux-arm64;; esac; mkdir -p "$dir"; curl -fsSL "https://github.com/$repo/releases/latest/download/$asset" -o "$dir/nfy"; chmod +x "$dir/nfy"; ln -sf nfy "$dir/rep"; grep -qxF 'export PATH="$HOME/.local/bin:$PATH"' "$HOME/.bashrc" || echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
+repo=flcl42/notify; dir="$HOME/.local/bin"; arch="$(uname -m)"; asset=nfy-linux-x64; case "$arch" in aarch64|arm64) asset=nfy-linux-arm64;; esac; mkdir -p "$dir"; curl -fsSL "https://github.com/$repo/releases/latest/download/$asset" -o "$dir/nfy"; chmod +x "$dir/nfy"; rm -f "$dir/rep"; grep -qxF 'export PATH="$HOME/.local/bin:$PATH"' "$HOME/.bashrc" || echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
 ```
 
 macOS, zsh, CLI only:
 
 ```zsh
-repo=flcl42/notify; dir="$HOME/.local/bin"; arch="$(uname -m)"; asset=nfy-macos-arm64; [ "$arch" = "x86_64" ] && asset=nfy-macos-x64; mkdir -p "$dir"; curl -fsSL "https://github.com/$repo/releases/latest/download/$asset" -o "$dir/nfy"; chmod +x "$dir/nfy"; ln -sf nfy "$dir/rep"; grep -qxF 'export PATH="$HOME/.local/bin:$PATH"' "$HOME/.zshrc" || echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.zshrc"
+repo=flcl42/notify; dir="$HOME/.local/bin"; arch="$(uname -m)"; asset=nfy-macos-arm64; [ "$arch" = "x86_64" ] && asset=nfy-macos-x64; mkdir -p "$dir"; curl -fsSL "https://github.com/$repo/releases/latest/download/$asset" -o "$dir/nfy"; chmod +x "$dir/nfy"; rm -f "$dir/rep"; grep -qxF 'export PATH="$HOME/.local/bin:$PATH"' "$HOME/.zshrc" || echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.zshrc"
 ```
 
 Android APK only:
@@ -253,12 +253,12 @@ Build the CLI binaries for all platforms:
 
 ```powershell
 # Windows
-.\scripts\build-nfy.ps1 -Version 0.4.0
+.\scripts\build-nfy.ps1 -Version 0.4.1
 ```
 
 ```bash
 # Linux / macOS / WSL
-./scripts/build-nfy.sh 0.4.0
+./scripts/build-nfy.sh 0.4.1
 ```
 
 Run the Go tests:
@@ -320,7 +320,7 @@ future messages for that subscription until the title is rotated.
 ## Release
 
 Branch and pull-request workflows test the CLI and Android build. Tags such as
-`release/0.4.0` build six standalone `nfy` CLI assets, two static Linux relay
+`release/0.4.1` build six standalone `nfy` CLI assets, two static Linux relay
 assets, and a signed APK, verify the APK signature, generate SHA-256 checksums,
 and publish a GitHub release. Android
 signing and Firebase client configuration use repository secrets; GitHub's

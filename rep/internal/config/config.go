@@ -74,8 +74,7 @@ func GetConfigPath() (string, error) {
 		base := strings.ToLower(filepath.Base(exe))
 		ext := filepath.Ext(base)
 		name := strings.TrimSuffix(base, ext)
-		// Keep renamed nfy releases and the legacy rep compatibility binary on one config.
-		if name == "nfy" || strings.HasPrefix(name, "nfy-") || name == "rep" || strings.HasPrefix(name, "rep-") {
+		if name == "nfy" || strings.HasPrefix(name, "nfy-") {
 			return migrateLegacyConfig(filepath.Join(filepath.Dir(exe), defaultConfigName))
 		}
 	}
