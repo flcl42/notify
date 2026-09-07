@@ -15,6 +15,10 @@ public final class LogInstrumentation extends Instrumentation {
     @Override public void onStart() {
         Bundle result = new Bundle();
         try {
+            android.content.pm.ActivityInfo scanner = getTargetContext().getPackageManager().getActivityInfo(
+                    new android.content.ComponentName(getTargetContext(), com.journeyapps.barcodescanner.CaptureActivity.class), 0);
+            check(scanner.screenOrientation == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED,
+                    "QR scanner must not force landscape");
             Context isolated = new ContextWrapper(getTargetContext()) {
                 @Override public SharedPreferences getSharedPreferences(String name, int mode) {
                     return super.getSharedPreferences("log_test_" + name, mode);
