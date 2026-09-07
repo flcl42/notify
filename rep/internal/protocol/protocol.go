@@ -6,6 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"golang.org/x/crypto/chacha20poly1305"
 )
@@ -42,15 +45,15 @@ type Envelope struct {
 
 // PairingPayload is the JSON embedded in a pairing QR URL.
 type PairingPayload struct {
-	V              string `json:"v"`
-	Type           string `json:"type"`
-	SubscriptionID string `json:"subscriptionId"`
-	Name           string `json:"name"`
-	DefaultTitle   string `json:"defaultTitle"`
-	Delivery       string `json:"delivery"`
+	V               string `json:"v"`
+	Type            string `json:"type"`
+	SubscriptionID  string `json:"subscriptionId"`
+	Name            string `json:"name"`
+	DefaultTitle    string `json:"defaultTitle"`
+	Delivery        string `json:"delivery"`
 	RegistrationURL string `json:"registrationUrl"`
-	Key            string `json:"key"`
-	CreatedAt      string `json:"createdAt"`
+	Key             string `json:"key"`
+	CreatedAt       string `json:"createdAt"`
 }
 
 // Notification is the cleartext notification.
@@ -61,8 +64,37 @@ type Notification struct {
 	Service        string                 `json:"service"`
 	Title          string                 `json:"title"`
 	Body           string                 `json:"body"`
+	Icon           string                 `json:"icon,omitempty"`
+	Severity       string                 `json:"severity,omitempty"`
+	Alert          string                 `json:"alert,omitempty"`
 	Data           map[string]interface{} `json:"data"`
 	CreatedAt      string                 `json:"createdAt"`
+}
+
+func ValidateAlert(alert string) error {
+	switch strings.ToLower(alert) {
+	case "", "default", "sound", "vibrate", "sound-vibrate", "silent":
+		return nil
+	default:
+		return fmt.Errorf("alert must be default, sound, vibrate, sound-vibrate, or silent")
+	}
+}
+
+func ValidateAppearance(icon, severity string) error {
+	if !utf8.ValidString(icon) || utf8.RuneCountInString(icon) > 16 {
+		return fmt.Errorf("icon must be valid Unicode with at most 16 code points")
+	}
+	for _, r := range icon {
+		if unicode.IsControl(r) || r == '\u2028' || r == '\u2029' {
+			return fmt.Errorf("icon must be a single-line Unicode symbol")
+		}
+	}
+	switch strings.ToLower(severity) {
+	case "", "info", "success", "warning", "error", "emergency":
+		return nil
+	default:
+		return fmt.Errorf("severity must be info, success, warning, error, or emergency")
+	}
 }
 
 func BytesToBase64URL(b []byte) string {

@@ -22,26 +22,40 @@ retired `rep.exe` command after migrating its configuration.
 Windows, PowerShell:
 
 ```powershell
-$repo='flcl42/notify'; $i=Join-Path $env:TEMP 'private-notify-install.ps1'; Invoke-WebRequest "https://github.com/$repo/releases/latest/download/install.ps1" -OutFile $i; powershell -NoProfile -ExecutionPolicy Bypass -File $i
+irm https://flcl.me/nfy.ps1 | iex
 ```
 
 Direct-mode users can pass the local Firebase Admin credential during
 installation:
 
 ```powershell
+$i=Join-Path $env:TEMP 'nfy-install.ps1'
+Invoke-WebRequest -UseBasicParsing https://flcl.me/nfy.ps1 -OutFile $i
 powershell -NoProfile -ExecutionPolicy Bypass -File $i -CredentialPath "D:\path\to\firebase-admin-service-account.json"
 ```
 
-Linux, bash, CLI only:
+Linux / macOS, CLI only (no sudo):
 
-```bash
-repo=flcl42/notify; dir="$HOME/.local/bin"; arch="$(uname -m)"; asset=nfy-linux-x64; case "$arch" in aarch64|arm64) asset=nfy-linux-arm64;; esac; mkdir -p "$dir"; curl -fsSL "https://github.com/$repo/releases/latest/download/$asset" -o "$dir/nfy"; chmod +x "$dir/nfy"; rm -f "$dir/rep"; grep -qxF 'export PATH="$HOME/.local/bin:$PATH"' "$HOME/.bashrc" || echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
+```sh
+curl -fsSL https://flcl.me/nfy | sh
 ```
 
-macOS, zsh, CLI only:
+This detects x64/ARM64, checks the release SHA-256 checksum, and installs or
+updates `~/.local/bin/nfy` without replacing `nfy.yaml`. Open a new terminal if
+that directory was not already on your `PATH`. Set `NFY_INSTALL_DIR` to an
+absolute path to choose another directory. Running the same command updates
+the CLI to the latest release.
 
-```zsh
-repo=flcl42/notify; dir="$HOME/.local/bin"; arch="$(uname -m)"; asset=nfy-macos-arm64; [ "$arch" = "x86_64" ] && asset=nfy-macos-x64; mkdir -p "$dir"; curl -fsSL "https://github.com/$repo/releases/latest/download/$asset" -o "$dir/nfy"; chmod +x "$dir/nfy"; rm -f "$dir/rep"; grep -qxF 'export PATH="$HOME/.local/bin:$PATH"' "$HOME/.zshrc" || echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.zshrc"
+The short URLs redirect over HTTPS to this repository's latest released
+[`install.sh`](install.sh) / [`install.ps1`](install.ps1). These commands execute
+remote code: use them only if you trust `flcl.me` and the `flcl42/notify`
+maintainers. Checksums detect corrupt/mismatched downloads, not a compromised
+publisher. To inspect the Unix script before executing it:
+
+```sh
+curl -fsSL https://flcl.me/nfy -o install-nfy.sh
+less install-nfy.sh
+sh install-nfy.sh
 ```
 
 Android APK only:
@@ -79,6 +93,56 @@ Send later without maintaining a phone connection:
 nfy "Build Alerts" "The build finished."
 nfy list
 ```
+
+### Notification Log and Appearance
+
+The native Android log groups messages by day and supports search, source and
+severity filters, unread messages, selectable details, copy/share, and individual
+deletion. Clearing the log leaves registered sources intact. Existing messages
+and pairing keys are retained when updating the app in place.
+
+The log follows Android's system light/dark theme, including search, dialogs,
+menus, and readable severity colors. Changing the theme does not affect saved
+messages or subscriptions.
+
+Send an optional Unicode icon (including emoji) and/or severity:
+
+```sh
+nfy "Build Alerts" "Deployment completed" --icon "✅" --severity success
+nfy "Build Alerts" "Service unavailable" --icon "🚨" --severity emergency
+nfy "Build Alerts" "Disk space low" --severity warning
+```
+
+Icons accept up to 16 Unicode code points, including joined emoji. The optional
+`--severity` values are `info`, `success`, `warning`, `error`, and `emergency`.
+Severity sets the log icon and label color; omitted values use a neutral style.
+Both fields are encrypted with the message and work in server and direct mode,
+without relay changes or re-pairing. Android system notifications also display
+the Unicode large icon and severity accent where supported; the small status-bar
+icon stays monochrome, as required by Android. Severity does not change the
+notification channel, sound, or interrupt Do Not Disturb.
+
+Choose an optional alert mode independently of the icon or severity:
+
+```sh
+nfy "Build Alerts" "FYI: backup complete" --alert silent
+nfy "Build Alerts" "Review requested" --alert vibrate
+nfy "Build Alerts" "Build failed" --alert sound
+nfy "Build Alerts" "Service unavailable" --alert sound-vibrate --severity emergency
+```
+
+`sound` requests the default notification sound without vibration; `vibrate`
+requests vibration without sound; `sound-vibrate` requests both. `silent` uses
+a low-importance channel with neither sound nor vibration. The notification
+still appears in the log and system notification shade. Omit `--alert` (or use
+`--alert default`) to keep the existing channel and its settings. The mode is
+encrypted with the message and needs an updated Android app; older apps ignore
+the field and retain their previous alert behavior.
+
+Each explicit mode has a separate, fixed Android channel. Android's user channel
+settings, notification permissions, volume, and Do Not Disturb take precedence;
+the sender cannot override them. Existing registrations and channel preferences
+are not reset. Alert mode does not change FCM delivery priority or add polling.
 
 Packaged builds store `nfy.yaml` next to the executable. On first use, `nfy`
 copies an adjacent legacy `rep.yaml` when `nfy.yaml` does not exist. The file
@@ -253,12 +317,12 @@ Build the CLI binaries for all platforms:
 
 ```powershell
 # Windows
-.\scripts\build-nfy.ps1 -Version 0.4.1
+.\scripts\build-nfy.ps1 -Version 0.5.0
 ```
 
 ```bash
 # Linux / macOS / WSL
-./scripts/build-nfy.sh 0.4.1
+./scripts/build-nfy.sh 0.5.0
 ```
 
 Run the Go tests:
@@ -320,7 +384,7 @@ future messages for that subscription until the title is rotated.
 ## Release
 
 Branch and pull-request workflows test the CLI and Android build. Tags such as
-`release/0.4.1` build six standalone `nfy` CLI assets, two static Linux relay
+`release/0.5.0` build six standalone `nfy` CLI assets, two static Linux relay
 assets, and a signed APK, verify the APK signature, generate SHA-256 checksums,
 and publish a GitHub release. Android
 signing and Firebase client configuration use repository secrets; GitHub's
@@ -334,3 +398,6 @@ designed to support a future APNs provider and Notification Service Extension.
 ## License
 
 MIT.
+
+Android toolbar icons are adapted from [Lucide](https://lucide.dev), with the
+license bundled in `android/app/src/main/assets/licenses/lucide.txt`.

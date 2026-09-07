@@ -2,6 +2,8 @@ package protocol
 
 import (
 	"crypto/rand"
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -70,6 +72,9 @@ func TestEncryptDecrypt(t *testing.T) {
 		Service:        "test",
 		Title:          "Native title",
 		Body:           "Native body",
+		Icon:           "\U0001f469\U0001f3fd\u200d\U0001f4bb",
+		Severity:       "emergency",
+		Alert:          "silent",
 		Data:           map[string]interface{}{"priority": "normal"},
 		CreatedAt:      time.Now().UTC().Format(time.RFC3339Nano),
 	})
@@ -95,6 +100,48 @@ func TestEncryptDecrypt(t *testing.T) {
 	}
 	if decrypted.Data["priority"] != "normal" {
 		t.Fatalf("data mismatch")
+	}
+	if decrypted.Icon != "\U0001f469\U0001f3fd\u200d\U0001f4bb" || decrypted.Severity != "emergency" {
+		t.Fatal("encrypted appearance metadata did not round-trip")
+	}
+	if decrypted.Alert != "silent" {
+		t.Fatal("encrypted alert mode did not round-trip")
+	}
+}
+
+func TestOptionalAppearance(t *testing.T) {
+	encoded, err := json.Marshal(Notification{Body: "plain"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "icon") || strings.Contains(string(encoded), "severity") || strings.Contains(string(encoded), "alert") {
+		t.Fatal("absent appearance fields should be omitted")
+	}
+	for _, icon := range []string{"", "\u26a1", "\U0001f469\U0001f3fd\u200d\U0001f4bb"} {
+		if err := ValidateAppearance(icon, "info"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, icon := range []string{"a\nb", strings.Repeat("a", 17), string([]byte{0xff})} {
+		if ValidateAppearance(icon, "") == nil {
+			t.Fatal("accepted invalid icon")
+		}
+	}
+	if ValidateAppearance("", "urgent-ish") == nil {
+		t.Fatal("accepted unknown severity")
+	}
+}
+
+func TestAlertModes(t *testing.T) {
+	for _, mode := range []string{"", "default", "sound", "vibrate", "sound-vibrate", "silent", "SILENT"} {
+		if err := ValidateAlert(mode); err != nil {
+			t.Fatalf("%q: %v", mode, err)
+		}
+	}
+	for _, mode := range []string{"loud", "silnet", "silent\n"} {
+		if ValidateAlert(mode) == nil {
+			t.Fatalf("accepted invalid alert %q", mode)
+		}
 	}
 }
 

@@ -20,7 +20,7 @@ function Get-ReleaseAsset {
     )
 
     $uri = "https://github.com/$Repository/releases/latest/download/$Name"
-    Invoke-WebRequest $uri -OutFile $Destination
+    Invoke-WebRequest -UseBasicParsing $uri -OutFile $Destination
 }
 
 function Assert-ReleaseAssetHash {
@@ -141,7 +141,7 @@ if (-not $SkipAndroid) {
             $installExitCode = $LASTEXITCODE
             $installOutput | ForEach-Object { Write-Host $_ }
             if ($installExitCode -ne 0) {
-                throw "Android installation failed. A debug-signed existing app must be removed and paired again before the release-signed APK can be installed."
+                throw "Android installation failed; existing app data was left intact. Resolve the ADB error above before retrying."
             }
         }
     }

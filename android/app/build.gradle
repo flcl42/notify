@@ -23,6 +23,7 @@ android {
         applicationId "dev.privatenotify"
         minSdk 28
         targetSdk 36
+        testInstrumentationRunner "dev.privatenotify.LogInstrumentation"
         versionCode releaseVersionCode
         versionName releaseVersionName
         buildConfigField "boolean", "FIREBASE_CONFIGURED", hasGoogleServices ? "true" : "false"

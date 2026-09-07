@@ -317,7 +317,13 @@ func resolveTitleAndBody(cfg config.Config, args []string) (*config.Subscription
 	return nil, ""
 }
 
-func sendNotification(args []string, service string, fcmServiceAccount string, fcmProjectID string, modeOverride, serverURLOverride string) error {
+func sendNotification(args []string, service string, fcmServiceAccount string, fcmProjectID string, modeOverride, serverURLOverride, icon, severity, alert string) error {
+	if err := protocol.ValidateAlert(alert); err != nil {
+		return err
+	}
+	if err := protocol.ValidateAppearance(icon, severity); err != nil {
+		return err
+	}
 	if len(args) == 0 {
 		return fmt.Errorf("usage: nfy <title> <notification text>")
 	}
@@ -358,6 +364,9 @@ func sendNotification(args []string, service string, fcmServiceAccount string, f
 		Service:        service,
 		Title:          sub.Title,
 		Body:           body,
+		Icon:           icon,
+		Severity:       strings.ToLower(severity),
+		Alert:          strings.ToLower(alert),
 		Data:           map[string]interface{}{},
 		CreatedAt:      time.Now().UTC().Format(time.RFC3339Nano),
 	})
@@ -531,6 +540,9 @@ func main() {
 		service           string
 		mode              string
 		serverURL         string
+		icon              string
+		severity          string
+		alert             string
 	)
 
 	rootCmd := &cobra.Command{
@@ -539,10 +551,13 @@ func main() {
 		Long:  "nfy sends encrypted Android notifications by title. Provide the title followed by the notification text.",
 		Args:  cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return sendNotification(args, service, fcmServiceAccount, fcmProjectID, mode, serverURL)
+			return sendNotification(args, service, fcmServiceAccount, fcmProjectID, mode, serverURL, icon, severity, alert)
 		},
 	}
 	rootCmd.Version = version.Version
+	rootCmd.PersistentFlags().StringVar(&icon, "icon", "", "optional Unicode notification icon, including emoji")
+	rootCmd.PersistentFlags().StringVar(&severity, "severity", "", "optional severity: info, success, warning, error, emergency")
+	rootCmd.PersistentFlags().StringVar(&alert, "alert", "", "alert mode: default, sound, vibrate, sound-vibrate, or silent")
 	rootCmd.PersistentFlags().StringVar(&fcmServiceAccount, "fcm-service-account", "", "Firebase Admin service-account JSON path for this send")
 	rootCmd.PersistentFlags().StringVar(&fcmProjectID, "fcm-project-id", "", "Firebase project id; defaults to the service account project_id")
 	rootCmd.PersistentFlags().StringVar(&service, "service", "nfy", "source service name")

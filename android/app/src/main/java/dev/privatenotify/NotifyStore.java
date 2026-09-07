@@ -13,6 +13,8 @@ final class NotifyStore {
     private static final String SUBSCRIPTIONS = "subscriptions";
     private static final String NOTIFICATIONS = "notifications";
     private static final String FCM_TOKEN = "fcm_token";
+    // All store instances share preferences, including the FCM background service.
+    private static final Object WRITE_LOCK = new Object();
     private final SharedPreferences prefs;
 
     NotifyStore(Context context) {
@@ -39,69 +41,113 @@ final class NotifyStore {
     }
 
     void upsertSubscription(JSONObject subscription) throws Exception {
-        JSONArray items = subscriptions();
-        JSONArray next = new JSONArray();
-        boolean replaced = false;
+        synchronized (WRITE_LOCK) {
+            JSONArray items = subscriptions();
+            JSONArray next = new JSONArray();
+            boolean replaced = false;
 
-        for (int index = 0; index < items.length(); index += 1) {
-            JSONObject item = items.getJSONObject(index);
-            if (subscription.getString("id").equals(item.optString("id"))) {
-                next.put(subscription);
-                replaced = true;
-            } else {
-                next.put(item);
+            for (int index = 0; index < items.length(); index += 1) {
+                JSONObject item = items.getJSONObject(index);
+                if (subscription.getString("id").equals(item.optString("id"))) {
+                    next.put(subscription);
+                    replaced = true;
+                } else {
+                    next.put(item);
+                }
             }
-        }
 
-        if (!replaced) {
-            next.put(subscription);
-        }
+            if (!replaced) {
+                next.put(subscription);
+            }
 
-        writeArray(SUBSCRIPTIONS, next);
+            writeArray(SUBSCRIPTIONS, next);
+        }
     }
 
     void removeSubscription(String id) throws Exception {
-        JSONArray items = subscriptions();
-        JSONArray next = new JSONArray();
+        synchronized (WRITE_LOCK) {
+            JSONArray items = subscriptions();
+            JSONArray next = new JSONArray();
 
-        for (int index = 0; index < items.length(); index += 1) {
-            JSONObject item = items.getJSONObject(index);
-            if (!id.equals(item.optString("id"))) {
-                next.put(item);
+            for (int index = 0; index < items.length(); index += 1) {
+                JSONObject item = items.getJSONObject(index);
+                if (!id.equals(item.optString("id"))) {
+                    next.put(item);
+                }
             }
-        }
 
-        writeArray(SUBSCRIPTIONS, next);
+            writeArray(SUBSCRIPTIONS, next);
+        }
     }
 
     JSONObject addNotification(JSONObject subscription, JSONObject decrypted) throws Exception {
-        JSONObject record = new JSONObject();
-        record.put("id", decrypted.optString("id", subscription.optString("id") + "-" + System.nanoTime()));
-        record.put("subscriptionId", subscription.getString("id"));
-        record.put("subscriptionName", subscription.optString("name", "phone"));
-        record.put("service", decrypted.optString("service", "service"));
-        record.put("title", decrypted.optString("title", subscription.optString("defaultTitle", "Notification")));
-        record.put("body", decrypted.optString("body", ""));
-        record.put("createdAt", decrypted.optString("createdAt", Instant.now().toString()));
-        record.put("receivedAt", Instant.now().toString());
+        synchronized (WRITE_LOCK) {
+            JSONObject record = new JSONObject();
+            record.put("id", decrypted.optString("id", subscription.optString("id") + "-" + System.nanoTime()));
+            record.put("subscriptionId", subscription.getString("id"));
+            record.put("subscriptionName", subscription.optString("name", "phone"));
+            record.put("service", decrypted.optString("service", "service"));
+            record.put("title", decrypted.optString("title", subscription.optString("defaultTitle", "Notification")));
+            record.put("body", decrypted.optString("body", ""));
+            record.put("icon", MessageStyle.icon(decrypted));
+            record.put("severity", MessageStyle.severity(decrypted));
+            record.put("alert", MessageStyle.alert(decrypted));
+            record.put("createdAt", decrypted.optString("createdAt", Instant.now().toString()));
+            record.put("receivedAt", Instant.now().toString());
 
-        JSONArray current = notifications();
-        JSONArray next = new JSONArray();
-        next.put(record);
+            JSONArray current = notifications();
+            JSONArray next = new JSONArray();
+            next.put(record);
 
-        for (int index = 0; index < current.length() && next.length() < 200; index += 1) {
-            JSONObject item = current.getJSONObject(index);
-            if (!record.getString("id").equals(item.optString("id"))) {
-                next.put(item);
+            for (int index = 0; index < current.length() && next.length() < 200; index += 1) {
+                JSONObject item = current.getJSONObject(index);
+                if (!record.getString("id").equals(item.optString("id"))) {
+                    next.put(item);
+                }
             }
-        }
 
-        writeArray(NOTIFICATIONS, next);
-        return record;
+            writeArray(NOTIFICATIONS, next);
+            return record;
+        }
     }
 
     void clearNotifications() {
-        prefs.edit().remove(NOTIFICATIONS).apply();
+        synchronized (WRITE_LOCK) {
+            prefs.edit().remove(NOTIFICATIONS).apply();
+        }
+    }
+
+    void markRead(String id) {
+        synchronized (WRITE_LOCK) {
+            JSONArray items = notifications();
+            for (int i = 0; i < items.length(); i++) {
+                JSONObject item = items.optJSONObject(i);
+                if (item != null && (id == null || id.equals(item.optString("id")))) {
+                    try { item.put("read", true); } catch (Exception ignored) { }
+                }
+            }
+            writeArray(NOTIFICATIONS, items);
+        }
+    }
+
+    void deleteNotification(String id) {
+        synchronized (WRITE_LOCK) {
+            JSONArray next = new JSONArray();
+            JSONArray items = notifications();
+            for (int i = 0; i < items.length(); i++) {
+                JSONObject item = items.optJSONObject(i);
+                if (item != null && !id.equals(item.optString("id"))) next.put(item);
+            }
+            writeArray(NOTIFICATIONS, next);
+        }
+    }
+
+    void observe(SharedPreferences.OnSharedPreferenceChangeListener listener) {
+        prefs.registerOnSharedPreferenceChangeListener(listener);
+    }
+
+    void stopObserving(SharedPreferences.OnSharedPreferenceChangeListener listener) {
+        prefs.unregisterOnSharedPreferenceChangeListener(listener);
     }
 
     void setFcmToken(String token) {

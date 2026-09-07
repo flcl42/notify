@@ -26,6 +26,8 @@ jobs:
           cache-dependency-path: rep/go.sum
       - run: go test ./...
         working-directory: rep
+      - name: Test Unix installer
+        run: sh scripts/test-install.sh
       - name: Build Windows x64 binary
         run: GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X github.com/flcl42/notify/rep/internal/version.Version=test" -o /tmp/nfy-windows-x64.exe .
         working-directory: rep
@@ -325,6 +327,7 @@ jobs:
         shell: bash
         run: |
           cp install.ps1 release-assets/install.ps1
+          cp install.sh release-assets/install.sh
           cd release-assets
           sha256sum * > SHA256SUMS.txt
           ls -lh

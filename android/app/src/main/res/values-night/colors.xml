@@ -1,0 +1,14 @@
+<resources>
+    <color name="log_background">#151718</color>
+    <color name="log_search">#232628</color>
+    <color name="log_text">#EFF2F0</color>
+    <color name="log_muted">#A8B2AC</color>
+    <color name="log_accent">#7DD3A9</color>
+    <color name="log_divider">#303637</color>
+    <color name="severity_info">#90BEFF</color>
+    <color name="severity_success">#79D4A3</color>
+    <color name="severity_warning">#EAC46B</color>
+    <color name="severity_error">#FFA19B</color>
+    <color name="severity_emergency">#FFA2BF</color>
+    <color name="severity_neutral">#B2BEB6</color>
+</resources>
