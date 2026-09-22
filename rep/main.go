@@ -317,7 +317,7 @@ func resolveTitleAndBody(cfg config.Config, args []string) (*config.Subscription
 	return nil, ""
 }
 
-func sendNotification(args []string, service string, fcmServiceAccount string, fcmProjectID string, modeOverride, serverURLOverride, icon, severity, alert string) error {
+func sendNotification(args []string, service string, fcmServiceAccount string, fcmProjectID string, modeOverride, serverURLOverride, icon, severity, alert string, verbose bool) error {
 	if err := protocol.ValidateAlert(alert); err != nil {
 		return err
 	}
@@ -409,7 +409,9 @@ func sendNotification(args []string, service string, fcmServiceAccount string, f
 		if err != nil {
 			return err
 		}
-		fmt.Printf("Sent \"%s\" notification through %s. Tokens: %d. Remaining today: %d total, %d for this QR.\n", sub.Title, serverURL, serverResult.Sent, serverResult.DailyRemaining, serverResult.SubscriptionDailyRemaining)
+		if verbose {
+			fmt.Printf("Sent \"%s\" notification through %s. Tokens: %d. Remaining today: %d total, %d for this QR.\n", sub.Title, serverURL, serverResult.Sent, serverResult.DailyRemaining, serverResult.SubscriptionDailyRemaining)
+		}
 		return nil
 	}
 
@@ -426,7 +428,9 @@ func sendNotification(args []string, service string, fcmServiceAccount string, f
 		return fmt.Errorf("no FCM push tokens are registered for \"%s\". Run: nfy create \"%s\"", sub.Title, sub.Title)
 	}
 
-	fmt.Printf("Sent \"%s\" notification. Tokens: %d.\n", sub.Title, result.Sent)
+	if verbose {
+		fmt.Printf("Sent \"%s\" notification. Tokens: %d.\n", sub.Title, result.Sent)
+	}
 	return nil
 }
 
@@ -543,15 +547,16 @@ func main() {
 		icon              string
 		severity          string
 		alert             string
+		verbose           bool
 	)
 
 	rootCmd := &cobra.Command{
 		Use:   "nfy [args...]",
 		Short: "Send encrypted Android notifications by title.",
-		Long:  "nfy sends encrypted Android notifications by title. Provide the title followed by the notification text.",
+		Long:  "nfy sends encrypted Android notifications by title. Provide the title followed by the notification text. Send is quiet on success and signals only by exit code; use --verbose to print delivery status.",
 		Args:  cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return sendNotification(args, service, fcmServiceAccount, fcmProjectID, mode, serverURL, icon, severity, alert)
+			return sendNotification(args, service, fcmServiceAccount, fcmProjectID, mode, serverURL, icon, severity, alert, verbose)
 		},
 	}
 	rootCmd.Version = version.Version
@@ -563,6 +568,7 @@ func main() {
 	rootCmd.PersistentFlags().StringVar(&service, "service", "nfy", "source service name")
 	rootCmd.PersistentFlags().StringVar(&mode, "mode", "", "delivery mode override: server or direct")
 	rootCmd.PersistentFlags().StringVar(&serverURL, "server-url", "", "relay server URL override")
+	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "print delivery status on success; quiet by default")
 
 	var (
 		createPort    int

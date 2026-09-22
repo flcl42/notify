@@ -3,7 +3,9 @@ param(
     [string]$Repository = "flcl42/notify",
     [string]$InstallDirectory = "C:\Programs",
     [string]$CredentialPath,
-    [switch]$SkipAndroid
+    # Optional: also download private-notify-android.apk (checksum-verified)
+    # into the current directory. The CLI directory is kept clean.
+    [switch]$Apk
 )
 
 Set-StrictMode -Version Latest
@@ -53,19 +55,6 @@ function Assert-ReleaseAssetHash {
     }
 }
 
-function Find-Adb {
-    $command = Get-Command adb -CommandType Application -ErrorAction SilentlyContinue
-    if ($command) {
-        return $command.Source
-    }
-
-    $candidates = @(
-        (Join-Path $env:LOCALAPPDATA 'Android\Sdk\platform-tools\adb.exe'),
-        (Join-Path $env:USERPROFILE 'AppData\Local\Android\Sdk\platform-tools\adb.exe')
-    )
-    return $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-}
-
 $processorArchitecture = if ($env:PROCESSOR_ARCHITEW6432) {
     $env:PROCESSOR_ARCHITEW6432
 } else {
@@ -87,10 +76,13 @@ $temporaryChecksums = Join-Path $temporaryDirectory 'SHA256SUMS.txt'
 New-Item -ItemType Directory -Force $temporaryDirectory | Out-Null
 try {
     Get-ReleaseAsset -Name $cliAsset -Destination $temporaryCli
-    Get-ReleaseAsset -Name $apkAsset -Destination $temporaryApk
     Get-ReleaseAsset -Name 'SHA256SUMS.txt' -Destination $temporaryChecksums
     Assert-ReleaseAssetHash -Path $temporaryCli -AssetName $cliAsset -ChecksumPath $temporaryChecksums
-    Assert-ReleaseAssetHash -Path $temporaryApk -AssetName $apkAsset -ChecksumPath $temporaryChecksums
+
+    if ($Apk) {
+        Get-ReleaseAsset -Name $apkAsset -Destination $temporaryApk
+        Assert-ReleaseAssetHash -Path $temporaryApk -AssetName $apkAsset -ChecksumPath $temporaryChecksums
+    }
 
     New-Item -ItemType Directory -Force $InstallDirectory | Out-Null
     $nfyConfig = Join-Path $InstallDirectory 'nfy.yaml'
@@ -103,7 +95,17 @@ try {
     if (Test-Path -LiteralPath $legacyCli) {
         Remove-Item -LiteralPath $legacyCli -Force
     }
-    Copy-Item -Force $temporaryApk (Join-Path $InstallDirectory $apkAsset)
+    # Older installers stored the APK next to nfy.exe; the CLI directory
+    # is now kept clean, so remove any stale copy.
+    $staleApk = Join-Path $InstallDirectory $apkAsset
+    if (Test-Path -LiteralPath $staleApk) {
+        Remove-Item -LiteralPath $staleApk -Force
+    }
+
+    if ($Apk) {
+        $apkDestination = Join-Path (Get-Location).Path $apkAsset
+        Copy-Item -Force $temporaryApk $apkDestination
+    }
 } finally {
     Remove-Item -LiteralPath $temporaryDirectory -Recurse -Force -ErrorAction SilentlyContinue
 }
@@ -118,7 +120,6 @@ if (-not (($env:Path -split ';') | Where-Object { $_.TrimEnd('\') -ieq $InstallD
 }
 
 $installedCli = Join-Path $InstallDirectory 'nfy.exe'
-$installedApk = Join-Path $InstallDirectory $apkAsset
 
 if ($CredentialPath) {
     $resolvedCredential = (Resolve-Path $CredentialPath).Path
@@ -128,27 +129,14 @@ if ($CredentialPath) {
     }
 }
 
-if (-not $SkipAndroid) {
-    $adb = Find-Adb
-    if (-not $adb) {
-        Write-Warning "ADB was not found. The APK is ready at $installedApk."
-    } else {
-        $connectedDevices = @(& $adb devices | Where-Object { $_ -match "\tdevice$" })
-        if ($connectedDevices.Count -eq 0) {
-            Write-Warning "No authorized Android device is connected. The APK is ready at $installedApk."
-        } else {
-            $installOutput = & $adb install -r $installedApk 2>&1
-            $installExitCode = $LASTEXITCODE
-            $installOutput | ForEach-Object { Write-Host $_ }
-            if ($installExitCode -ne 0) {
-                throw "Android installation failed; existing app data was left intact. Resolve the ADB error above before retrying."
-            }
-        }
-    }
-}
-
 Write-Host "Installed CLI: $installedCli"
-Write-Host "Android APK:  $installedApk"
+if ($Apk) {
+    $apkDestination = Join-Path (Get-Location).Path $apkAsset
+    Write-Host "Downloaded APK: $apkDestination"
+    Write-Host 'Install it with: adb install -r .\private-notify-android.apk'
+} else {
+    Write-Host 'Android app is not included. Re-run with -Apk to also download private-notify-android.apk into the current directory, then: adb install -r .\private-notify-android.apk'
+}
 if (-not $CredentialPath) {
     Write-Host 'Default delivery uses the hosted relay; no local Firebase Admin key is required.'
     Write-Host 'Next: nfy create "Build Alerts"'

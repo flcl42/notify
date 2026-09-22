@@ -14,15 +14,28 @@ local sender and uses a Firebase Admin service-account file on the CLI machine.
 ## Install
 
 GitHub releases contain standalone CLI executables and a signed Android APK.
-The Windows installer verifies release checksums, installs `nfy.exe` and the APK
-under `C:\Programs`, adds that directory to the user `PATH`, and uses ADB to
-install the app when an authorized Android device is connected. It removes the
-retired `rep.exe` command after migrating its configuration.
+Both installers below are CLI-only by default: they verify release checksums,
+install `nfy`/`nfy.exe`, and leave `nfy.yaml` and registered keys intact. The
+Windows installer uses `C:\Programs` and adds that directory to the user
+`PATH`. It removes the retired `rep.exe` command after migrating its
+configuration, along with any stale `private-notify-android.apk` left in
+`C:\Programs` by older installers. Neither installer puts the APK into the CLI
+directory; pass the APK option to download it into the current directory
+instead (download only, checksum-verified).
 
-Windows, PowerShell:
+Windows, PowerShell, CLI only:
 
 ```powershell
 irm https://flcl.me/nfy.ps1 | iex
+```
+
+With the Android APK in the current directory:
+
+```powershell
+$i=Join-Path $env:TEMP 'nfy-install.ps1'
+Invoke-WebRequest -UseBasicParsing https://flcl.me/nfy.ps1 -OutFile $i
+powershell -NoProfile -ExecutionPolicy Bypass -File $i -Apk
+adb install -r .\private-notify-android.apk
 ```
 
 Direct-mode users can pass the local Firebase Admin credential during
@@ -38,6 +51,14 @@ Linux / macOS, CLI only (no sudo):
 
 ```sh
 curl -fsSL https://flcl.me/nfy | sh
+```
+
+With the Android APK in the current directory:
+
+```sh
+curl -fsSL https://flcl.me/nfy -o install-nfy.sh
+sh install-nfy.sh --apk
+adb install -r ./private-notify-android.apk
 ```
 
 This detects x64/ARM64, checks the release SHA-256 checksum, and installs or
@@ -58,11 +79,16 @@ less install-nfy.sh
 sh install-nfy.sh
 ```
 
-Android APK only:
+Android app (separate from the CLI):
 
 ```powershell
 $repo='flcl42/notify'; Invoke-WebRequest "https://github.com/$repo/releases/latest/download/private-notify-android.apk" -OutFile .\private-notify-android.apk; adb install -r .\private-notify-android.apk
 ```
+
+Prefer the installers above with `-Apk` / `--apk`: they verify the APK
+checksum and save `private-notify-android.apk` into the current directory.
+You can also download it from the latest GitHub release and install it
+manually. The CLI installers never place the APK into the CLI directory.
 
 An existing debug-signed build cannot be updated by a release-signed APK. If
 ADB reports a signature mismatch, uninstalling `dev.privatenotify` removes its
@@ -92,6 +118,13 @@ Send later without maintaining a phone connection:
 ```powershell
 nfy "Build Alerts" "The build finished."
 nfy list
+```
+
+Send signals only by exit code and prints nothing on success. Use
+`--verbose` (`-v`) to print delivery status, and nothing else:
+
+```powershell
+nfy --verbose "Build Alerts" "The build finished."
 ```
 
 ### Notification Log and Appearance

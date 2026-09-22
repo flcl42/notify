@@ -3,7 +3,7 @@ set -eu
 installer=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)/install.sh
 test_root=$(mktemp -d)
 trap 'rm -rf -- "$test_root"' EXIT
-mkdir -p "$test_root/bin" "$test_root/home" "$test_root/assets"
+mkdir -p "$test_root/bin" "$test_root/home" "$test_root/assets" "$test_root/work"
 export HOME="$test_root/home" TEST_ASSETS="$test_root/assets" SHELL=/bin/sh
 export PATH="$test_root/bin:$PATH"
 cat > "$test_root/bin/uname" <<'MOCK'
@@ -34,6 +34,8 @@ for asset in nfy-linux-x64 nfy-linux-arm64 nfy-macos-x64 nfy-macos-arm64; do
     cp "$TEST_ASSETS/binary" "$TEST_ASSETS/$asset"
     (cd "$TEST_ASSETS" && sha256sum "$asset") >> "$TEST_ASSETS/SHA256SUMS.txt"
 done
+printf 'fake-apk-bytes\n' > "$TEST_ASSETS/private-notify-android.apk"
+(cd "$TEST_ASSETS" && sha256sum private-notify-android.apk) >> "$TEST_ASSETS/SHA256SUMS.txt"
 mkdir -p "$HOME/.local/bin"
 printf 'private-key-sentinel\n' > "$HOME/.local/bin/nfy.yaml"
 for os in Linux Darwin; do
@@ -44,8 +46,25 @@ for os in Linux Darwin; do
     done
 done
 test "$(grep -c 'export PATH=' "$HOME/.profile")" -eq 1
+# No APK without the flag, even though the release contains one.
+cd "$test_root/work"
+rm -f ./private-notify-android.apk
+TEST_OS=Linux TEST_ARCH=x86_64 sh "$installer"
+test ! -e ./private-notify-android.apk
+# Unknown options are rejected.
+if sh "$installer" --bogus; then echo 'FAIL: unknown option accepted' >&2; exit 1; fi
+# --apk downloads the checksum-verified APK into the current directory.
+TEST_OS=Linux TEST_ARCH=x86_64 sh "$installer" --apk
+cmp "$TEST_ASSETS/private-notify-android.apk" ./private-notify-android.apk
+cmp "$TEST_ASSETS/binary" "$HOME/.local/bin/nfy"
+# Corrupt APK is rejected; CLI and existing APK stay intact.
+printf 'corrupt apk\n' > "$TEST_ASSETS/private-notify-android.apk"
+if TEST_OS=Linux TEST_ARCH=x86_64 sh "$installer" --apk; then echo 'FAIL: corrupt APK accepted' >&2; exit 1; fi
+cmp "$TEST_ASSETS/binary" "$HOME/.local/bin/nfy"
+printf 'fake-apk-bytes\n' > "$TEST_ASSETS/private-notify-android.apk"
+cd - >/dev/null
 printf 'corrupt binary\n' > "$TEST_ASSETS/nfy-linux-x64"
 if sh "$installer"; then echo 'FAIL: checksum mismatch accepted' >&2; exit 1; fi
 cmp "$TEST_ASSETS/binary" "$HOME/.local/bin/nfy"
 if TEST_ARCH=riscv64 sh "$installer"; then echo 'FAIL: unknown arch accepted' >&2; exit 1; fi
-echo 'PASS: platforms, architectures, checksums, atomic update, config preservation, PATH deduplication'
+echo 'PASS: platforms, architectures, checksums, atomic update, config preservation, PATH deduplication, opt-in APK'
